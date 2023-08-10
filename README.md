@@ -1,5 +1,5 @@
 # car-driving-agent
-## Coustome Gym Environment with Keras PPO and Multiprocessing
+## Custome Gym Environment with Keras PPO and Multiprocessing
 
 Result after training for about an hour with 4 processes (200 epochs and 4000 steps per epoch):
 
