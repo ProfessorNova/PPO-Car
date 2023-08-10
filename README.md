@@ -11,7 +11,7 @@ Result after training for about an hour with 4 processes (200 epochs and 4000 st
 - Libraries: numpy, scipy, gymnasium, and pygame. These can all be installed using pip.
 
 ## How to run my pretrained model
-You just need to copy all filescontained in this [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) into one folder, and run [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py).
+You just need to copy all files contained in this [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) into one folder, and run [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py).
 
 ## How to train
 In the [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py) from the [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) you need to change the main to:
