@@ -6,15 +6,15 @@ Result after training for about an hour with 4 processes (200 epochs and 4000 st
 ![Demo Gif](https://github.com/ProfessorNova/car-driving-agent/blob/main/gifs/demo.gif)
 
 ## Requirements
-- Environment: You can just use the environment I created, [CarEnv](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_coustome_environment/CarEnv.py). But the PPO Agent can be run in any environment. You just have to set up the environment as described in this [Gymnasium Documentation](https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation/).
+- Environment: You can just use the environment I created, [CarEnv](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/CarEnv.py). But the PPO Agent can be run in any environment. You just have to set up the environment as described in this [Gymnasium Documentation](https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation/).
 - TensorFlow: I used TensorFlow 2.10 because starting with TensorFlow 2.11 GPU isn't supported in native Windows. You can just follow the [TensorFlow Installation Guide](https://www.tensorflow.org/install/pip).
 - Libraries: numpy, scipy, gymnasium, and pygame. These can all be installed using pip.
 
 ## How to run my pretrained model
-You just need to copy all filescontained in this [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_coustome_environment) into one folder, and run [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_coustome_environment/PPO_Agent.py).
+You just need to copy all filescontained in this [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) into one folder, and run [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py).
 
 ## How to train
-In the [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_coustome_environment/PPO_Agent.py) [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_coustome_environment) you need to change the main to:
+In the [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py) [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) you need to change the main to:
 ```python
 def main():
     env = CarEnv()
