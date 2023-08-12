@@ -8,7 +8,7 @@ Result after training for about an hour with 4 processes (200 epochs and 4000 st
 ## Requirements
 - Environment: You can just use the environment I created, [CarEnv](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/CarEnv.py). But the PPO Agent can be run in any environment. You just have to set up the environment as described in this [Gymnasium Documentation](https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation/).
 - TensorFlow: I used TensorFlow 2.10 because starting with TensorFlow 2.11 GPU isn't supported in native Windows. You can just follow the [TensorFlow Installation Guide](https://www.tensorflow.org/install/pip).
-- Libraries: numpy, scipy, gymnasium, and pygame. These can all be installed using pip.
+- Libraries: numpy, scipy, gymnasium, and pygame. These can all be installed using pip. For installing the libs you can just use [requirements.txt](https://github.com/ProfessorNova/car-driving-agent/blob/main/requirements.txt). With the the folder containing requirements.txt just type ```pip install -r requirements.txt```. If you have got problems with the installation of TensorFlow, please take a look at the Installation Guide, which is listed above.
 
 ## How to run my pretrained model
 You just need to copy all files contained in this [example](https://github.com/ProfessorNova/car-driving-agent/tree/main/example_custome_environment) into one folder, and run [PPO_Agent.py](https://github.com/ProfessorNova/car-driving-agent/blob/main/example_custome_environment/PPO_Agent.py). Make sure that the current working directory is the example_custome_environment. Otherwise there could be some issues with loading the model.
