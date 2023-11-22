@@ -428,10 +428,10 @@ class CarEnv(gym.Env):
 
             # Load the background and car images
             if self.background is None:
-                self.background = pygame.image.load("track.png")
+                self.background = pygame.image.load("C:\\Users\\Florian\\Documents\\GitHub\\car-driving-agent\\example_custome_environment\\track.png")
                 self.background = pygame.transform.scale(self.background, (self.width, self.height))
             if self.car.image is None:
-                self.car.set_image("car.png")
+                self.car.set_image("C:\\Users\\Florian\\Documents\\GitHub\\car-driving-agent\\example_custome_environment\\car.png")
                 
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
@@ -452,6 +452,10 @@ class CarEnv(gym.Env):
             return np.transpose(
                 np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
             )
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
 
 
     def close(self):

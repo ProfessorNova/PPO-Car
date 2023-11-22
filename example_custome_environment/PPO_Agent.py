@@ -474,8 +474,9 @@ class PPO_Agent:
 
     # Load actor and critic models
     def load(self, path):
-        self.actor = tf.keras.models.load_model(os.path.join(path, "actor"))
-        self.critic = tf.keras.models.load_model(os.path.join(path, "critic"))
+        project_path = os.path.abspath(os.path.dirname(__file__))
+        self.actor = tf.keras.models.load_model(os.path.join(project_path, path, "actor"), compile=False)
+        self.critic = tf.keras.models.load_model(os.path.join(project_path, path, "critic"), compile=False)
 
     # With the trained actor just running the environment
     def run(self):
