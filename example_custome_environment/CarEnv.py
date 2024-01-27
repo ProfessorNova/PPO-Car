@@ -1,5 +1,6 @@
 import numpy as np
 import pygame
+import os
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -427,11 +428,12 @@ class CarEnv(gym.Env):
             )
 
             # Load the background and car images
+            project_path = os.path.abspath(os.path.dirname(__file__))
             if self.background is None:
-                self.background = pygame.image.load("C:\\Users\\Florian\\Documents\\GitHub\\car-driving-agent\\example_custome_environment\\track.png")
+                self.background = pygame.image.load(os.path.join(project_path, "track.png"))
                 self.background = pygame.transform.scale(self.background, (self.width, self.height))
             if self.car.image is None:
-                self.car.set_image("C:\\Users\\Florian\\Documents\\GitHub\\car-driving-agent\\example_custome_environment\\car.png")
+                self.car.set_image(os.path.join(project_path, "car.png"))
                 
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
