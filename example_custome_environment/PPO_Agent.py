@@ -472,11 +472,21 @@ class PPO_Agent:
         self.actor.save(os.path.join(path, "actor"))
         self.critic.save(os.path.join(path, "critic"))
 
+    # Save as .h5 file
+    def save_h5(self, path):
+        self.actor.save(os.path.join(path, "actor.h5"))
+        self.critic.save(os.path.join(path, "critic.h5"))
+
     # Load actor and critic models
     def load(self, path):
         project_path = os.path.abspath(os.path.dirname(__file__))
         self.actor = tf.keras.models.load_model(os.path.join(project_path, path, "actor"), compile=False)
         self.critic = tf.keras.models.load_model(os.path.join(project_path, path, "critic"), compile=False)
+
+    def load_h5(self, path):
+        project_path = os.path.abspath(os.path.dirname(__file__))
+        self.actor = tf.keras.models.load_model(os.path.join(project_path, path, "actor.h5"), compile=False)
+        self.critic = tf.keras.models.load_model(os.path.join(project_path, path, "critic.h5"), compile=False)
 
     # With the trained actor just running the environment
     def run(self):
@@ -523,7 +533,7 @@ def main():
     # agent.train()
     # agent.save("models")
 
-    agent.load("models")
+    agent.load_h5("models_h5")
     agent.run()
 
 
