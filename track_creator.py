@@ -44,22 +44,20 @@ while running:
     # fill the screen with a color to wipe away anything from last frame
     screen.fill("grey")
 
-    # Scaling the mouse position and drawing a circle
-    scaled_mouse_pos = scale_pos(pygame.mouse.get_pos(), (WIDTH, HEIGHT), (current_width, current_height))
-    pygame.draw.circle(screen, "red", scaled_mouse_pos, scale_radius(5, (WIDTH, HEIGHT), (current_width, current_height)))
+    pygame.draw.circle(screen, "red", pygame.mouse.get_pos(), 3)
 
     if pygame.mouse.get_pressed()[0] and not mouse_pressed:
         mouse_pressed = True
-        corners.append(scaled_mouse_pos)
+        corners.append(scale_pos(pygame.mouse.get_pos(), (current_width, current_height), (WIDTH, HEIGHT)))
     elif not pygame.mouse.get_pressed()[0] and mouse_pressed:
         mouse_pressed = False
 
     if len(corners) > 1:
-        corners[-1] = scaled_mouse_pos
+        corners[-1] = pygame.mouse.get_pos()
         scaled_corners = [scale_pos(corner, (WIDTH, HEIGHT), (current_width, current_height)) for corner in corners]
         pygame.draw.lines(screen, "red", False, scaled_corners)
     elif len(corners) == 1:
-        corners.append(scaled_mouse_pos)
+        corners.append(pygame.mouse.get_pos())
 
     print(corners)
 
