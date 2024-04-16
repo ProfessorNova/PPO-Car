@@ -1,4 +1,5 @@
 import pygame
+import json
 
 # pygame setup
 pygame.init()
@@ -58,13 +59,26 @@ while running:
 
         elif event.type == pygame.KEYDOWN:
             # complete the group
-            if event.key == pygame.K_c:
+            if event.key == pygame.K_n:
                 # append the first corner to the end of the array
                 corners[current_mode][-1] = corners[current_mode][0]
                 if current_mode == "outer":
                     current_mode = "inner"
                 elif current_mode == "inner":
                     current_mode = None
+            if event.key == pygame.K_s and current_mode is None:
+                # save the track to a file
+                with open("track.json", "w") as f:
+                    json.dump(corners, f)
+            if event.key == pygame.K_l:
+                # load the track from a file
+                with open("track.json", "r") as f:
+                    corners = json.load(f)
+                current_mode = None
+            if event.key == pygame.K_c:
+                # clear the track
+                corners = {"outer": [], "inner": []}
+                current_mode = "outer"
 
     normalized_mouse_pos = normalize_pos(pygame.mouse.get_pos(), (current_width, current_height))
 
