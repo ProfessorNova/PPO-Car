@@ -466,6 +466,28 @@ def draw():
             2,
         )
 
+    # Draw the cursor
+    if current_mode == "outer_track_points":
+        cursor_color = outer_track_color
+    elif current_mode == "inner_track_points":
+        cursor_color = inner_track_color
+    elif current_mode == "reward_gates":
+        if len(track_data["reward_gates"]) < 2:
+            cursor_color = finish_line_color
+        else:
+            cursor_color = reward_gate_color
+    elif current_mode == "initial_position":
+        cursor_color = initial_position_color
+    else:
+        cursor_color = (255, 255, 255)
+
+    pygame.draw.circle(
+        screen,
+        cursor_color,
+        pygame.mouse.get_pos(),
+        3,
+    )
+
     # Set up the font for the info text
     info_font = pygame.font.SysFont(None, 20)
     info_text = ""
@@ -519,28 +541,6 @@ def draw():
         ),
         info_font,
         (255, 255, 0),
-    )
-
-    # Draw the cursor
-    if current_mode == "outer_track_points":
-        cursor_color = outer_track_color
-    elif current_mode == "inner_track_points":
-        cursor_color = inner_track_color
-    elif current_mode == "reward_gates":
-        if len(track_data["reward_gates"]) < 2:
-            cursor_color = finish_line_color
-        else:
-            cursor_color = reward_gate_color
-    elif current_mode == "initial_position":
-        cursor_color = initial_position_color
-    else:
-        cursor_color = (255, 255, 255)
-
-    pygame.draw.circle(
-        screen,
-        cursor_color,
-        pygame.mouse.get_pos(),
-        3,
     )
 
     pygame.display.flip()

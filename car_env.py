@@ -106,8 +106,6 @@ class Reward_gate(Boundary):
     def draw(self, screen: pygame.Surface, color: str = "green", thickness: int = 2):
         if self.__active:
             pygame.draw.line(screen, color, self.__a, self.__b, thickness)
-        else:
-            pygame.draw.line(screen, "red", self.__a, self.__b, thickness)
 
     def pass_gate(self):
         self.__active = False
@@ -285,11 +283,17 @@ class Car:
     def is_destroyed(self) -> bool:
         return self.__destroyed
 
+    def get_max_speed(self) -> float:
+        return self.__max_speed
+
     def set_destroyed(self, destroyed: bool):
         self.__destroyed = destroyed
 
-    def get_max_speed(self) -> float:
-        return self.__max_speed
+    def set_position(self, x: Union[int, float], y: Union[int, float]):
+        self.__pos = np.array([float(x), float(y)])
+
+    def set_rotation(self, rotation: float):
+        self.__rotation = rotation
 
     def draw(self, screen: pygame.Surface):
         """
@@ -299,9 +303,11 @@ class Car:
             screen (pygame.Surface): The pygame screen object to draw the car on.
         """
         if self.__image is not None:
-            rotated_image = pygame.transform.rotate(self.__image, self.__rotation - 90)
-            self.__sprite = rotated_image.get_rect(center=self.__pos)
-            screen.blit(rotated_image, self.__sprite)
+            updated_image = pygame.transform.rotate(
+                self.__image, -(self.__rotation + 90)
+            )
+            self.__sprite = updated_image.get_rect(center=self.__pos)
+            screen.blit(updated_image, self.__sprite)
         else:
             draw_rectangle(
                 screen,
@@ -369,7 +375,7 @@ class Car:
                 return True
         return False
 
-    def check_gates_passed(self, gates: List[Reward_gate]) -> bool:
+    def check_gate_passed(self, gates: List[Reward_gate]) -> bool:
         """
         Check if the car has passed through a reward gate.
 
@@ -380,7 +386,7 @@ class Car:
             bool: True if the car has passed through a reward gate, False otherwise.
         """
         for gate in gates:
-            if gate.is_active and self.check_collision(gate):
+            if gate.is_active() and self.check_collision(gate):
                 gate.pass_gate()
                 return True
         return False
@@ -451,7 +457,7 @@ class Car_env(gym.Env):
     metadata = {"render.modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(
-        self, render_mode: Optional[str] = None, track: str = "tracks/track.json"
+        self, render_mode: Optional[str] = None, track_path: str = "tracks/track.json"
     ):
         """
         Initialize the Car_env object.
@@ -465,38 +471,42 @@ class Car_env(gym.Env):
         self.__time_step: int = 0
         self.__time_limit: int = 1000
 
-        self.__track_data = self.load_track(track)
+        try:
+            self.__track_data = self.load_track(track_path)
+        except FileNotFoundError:
+            print(f"Track file not found at {track_path}.")
+            return
 
         self.__car = Car(
             self.__track_data["initial_position"][0],
             self.__track_data["initial_position"][1],
             self.__track_data["initial_angle"],
-            None,
+            "car.png",
         )
 
-        self.outer_track_points = self.__track_data["outer_track_points"]
-        self.inner_track_points = self.__track_data["inner_track_points"]
+        self.__outer_track_points = self.__track_data["outer_track_points"]
+        self.__inner_track_points = self.__track_data["inner_track_points"]
         self.__reward_gates_points = self.__track_data["reward_gates"]
 
         self.__boundaries = []
         self.__reward_gates = []
-        for b in range(len(self.outer_track_points) - 1):
+        for b in range(len(self.__outer_track_points) - 1):
             self.__boundaries.append(
                 Boundary(
-                    self.outer_track_points[b][0],
-                    self.outer_track_points[b][1],
-                    self.outer_track_points[b + 1][0],
-                    self.outer_track_points[b + 1][1],
+                    self.__outer_track_points[b][0],
+                    self.__outer_track_points[b][1],
+                    self.__outer_track_points[b + 1][0],
+                    self.__outer_track_points[b + 1][1],
                 )
             )
 
-        for b in range(len(self.inner_track_points) - 1):
+        for b in range(len(self.__inner_track_points) - 1):
             self.__boundaries.append(
                 Boundary(
-                    self.inner_track_points[b][0],
-                    self.inner_track_points[b][1],
-                    self.inner_track_points[b + 1][0],
-                    self.inner_track_points[b + 1][1],
+                    self.__inner_track_points[b][0],
+                    self.__inner_track_points[b][1],
+                    self.__inner_track_points[b + 1][0],
+                    self.__inner_track_points[b + 1][1],
                 )
             )
 
@@ -534,7 +544,7 @@ class Car_env(gym.Env):
         self.window = None
         self.clock = None
 
-    def load_track(self, track: str) -> dict:
+    def load_track(self, track_path: str) -> dict:
         """
         Load the track data from a JSON file and upscale it.
 
@@ -544,7 +554,7 @@ class Car_env(gym.Env):
         Returns:
             dict: The track data as a dictionary.
         """
-        with open(track, "r") as f:
+        with open(track_path, "r") as f:
             data = json.load(f)
 
         # Upscale the track data
@@ -566,7 +576,6 @@ class Car_env(gym.Env):
             data["initial_position"][1] * scale_factor_y,
         ]
 
-        print(data)
         return data
 
     def _get_obs(self):
@@ -593,12 +602,13 @@ class Car_env(gym.Env):
         return obs
 
     def _get_info(self):
-        info = {}
-        info["gates_passed"] = self.__passed_reward_gates
-        info["time_passed"] = self.__time_step
-        return info
+        return {
+            "gates_passed": self.__passed_reward_gates,
+            "time_passed": self.__time_step,
+        }
 
     def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
         self.__time_step = 0
         self.__car.reset()
         self.__car.set_destroyed(False)
@@ -607,12 +617,62 @@ class Car_env(gym.Env):
         for gate in self.__reward_gates:
             gate.restore_gate()
         if options and "no_time_limit" in options:
-            self.__time_limit = sys.maxsize
+            if options["no_time_limit"]:
+                self.__time_limit = sys.maxsize
         else:
             self.__time_limit = 1000
+
+        if options and "track_path" in options:
+            track_path = options["track_path"]
+            self.__track_data = self.load_track(track_path)
+
+            self.__outer_track_points = self.__track_data["outer_track_points"]
+            self.__inner_track_points = self.__track_data["inner_track_points"]
+            self.__reward_gates_points = self.__track_data["reward_gates"]
+            self.__car.set_position(
+                self.__track_data["initial_position"][0],
+                self.__track_data["initial_position"][1],
+            )
+            self.__car.set_rotation(self.__track_data["initial_angle"])
+
+            self.__boundaries = []
+            self.__reward_gates = []
+            for b in range(len(self.__outer_track_points) - 1):
+                self.__boundaries.append(
+                    Boundary(
+                        self.__outer_track_points[b][0],
+                        self.__outer_track_points[b][1],
+                        self.__outer_track_points[b + 1][0],
+                        self.__outer_track_points[b + 1][1],
+                    )
+                )
+
+            for b in range(len(self.__inner_track_points) - 1):
+                self.__boundaries.append(
+                    Boundary(
+                        self.__inner_track_points[b][0],
+                        self.__inner_track_points[b][1],
+                        self.__inner_track_points[b + 1][0],
+                        self.__inner_track_points[b + 1][1],
+                    )
+                )
+
+            for g in range(0, len(self.__reward_gates_points) - 1, 2):
+                self.__reward_gates.append(
+                    Reward_gate(
+                        self.__reward_gates_points[g][0],
+                        self.__reward_gates_points[g][1],
+                        self.__reward_gates_points[g + 1][0],
+                        self.__reward_gates_points[g + 1][1],
+                    )
+                )
+
+            self.__total_reward_gates = len(self.__reward_gates)
+            self.__passed_reward_gates = 0
+            self.__remaining_reward_gates = self.__total_reward_gates
         obs = self._get_obs()
         info = self._get_info()
-        return obs
+        return obs, info
 
     def step(self, action):
         reward = 0
@@ -646,7 +706,7 @@ class Car_env(gym.Env):
             for gate in self.__reward_gates:
                 gate.restore_gate()
             self.__remaining_reward_gates = self.__total_reward_gates
-        if self.__car.check_gates_passed(self.__reward_gates):
+        if self.__car.check_gate_passed(self.__reward_gates):
             self.__passed_reward_gates += 1
             self.__remaining_reward_gates -= 1
             reward += 1
@@ -668,7 +728,7 @@ class Car_env(gym.Env):
         if self.render_mode == "human":
             self.__render_frame()
 
-        return obs, reward, terminated, False
+        return obs, reward, terminated, False, info
 
     def render(self):
         if self.render_mode == "rgb_array":
@@ -712,7 +772,7 @@ class Car_env(gym.Env):
 
 def main():
     env = Car_env(render_mode="human")
-    obs = env.reset(options=["no_time_limit"])
+    obs, _ = env.reset(options={"track_path": "tracks/track.json"})
     done = False
     while not done:
         # Wait until pygame is initialized
@@ -731,8 +791,8 @@ def main():
             elif keys[pygame.K_RIGHT]:
                 action = 3
 
-        obs, reward, done, info = env.step(action)
-        print(obs, reward, done, info)
+        obs, reward, done, _, info = env.step(action)
+        print(info)
         env.render()
     env.close()
 
