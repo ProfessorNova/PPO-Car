@@ -1,12 +1,11 @@
 import json
-import os
-import sys
 from typing import List, Optional, Union
 
 import gymnasium as gym
 import numpy as np
 import pygame
 from gymnasium import spaces
+from gymnasium.envs.registration import register
 
 
 def draw_rectangle(
@@ -377,7 +376,8 @@ class Car:
 
     def check_gate_passed(self, gates: List[Reward_gate]) -> bool:
         """
-        Check if the car has passed through a reward gate.
+        Check if the car has passed through a active reward gate. If the car has passed through a reward gate, the gate
+        is deactivated.
 
         Args:
             gates (List[Reward_gate]): A list of reward gates to check for intersection.
@@ -579,23 +579,37 @@ class Car_env(gym.Env):
         return data
 
     def _get_obs(self):
+        """
+        Get the observation of the environment.
+
+        Returns:
+            np.array: The observation array.
+        """
         obs = []
-        obs.append(self.__car.get_position()[0] / self.__width)
-        obs.append(self.__car.get_position()[1] / self.__height)
-        obs.append(self.__car.get_velocity()[0] / self.__car.get_max_speed())
-        obs.append(self.__car.get_velocity()[1] / self.__car.get_max_speed())
+
+        # Normalize the car's position
+        obs.append(self.__car.get_position()[0] / self.__width)  # x position
+        obs.append(self.__car.get_position()[1] / self.__height)  # y position
+
+        # Normalize the car's velocity
+        obs.append(
+            self.__car.get_velocity()[0] / self.__car.get_max_speed()
+        )  # x velocity
+        obs.append(
+            self.__car.get_velocity()[1] / self.__car.get_max_speed()
+        )  # y velocity
 
         # Use the car's rotation as the last two observations
         x, y = np.cos(np.radians(self.__car.get_rotation())), np.sin(
             np.radians(self.__car.get_rotation())
         )
-        obs.append(x)
-        obs.append(y)
+        obs.append(x)  # x component of rotation
+        obs.append(y)  # y component of rotation
 
         # Append the rays distances to the observation space
         distances = self.__car.get_distances(self.__boundaries)
         for d in distances:
-            obs.append(d / 1000.0)
+            obs.append(d / 1000.0)  # Normalize the distance
 
         obs = np.array(obs)
 
@@ -608,6 +622,17 @@ class Car_env(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
+        """
+        Resets the environment to its initial state. Possible options include setting "no_time_limit" to True to remove
+        the time limit and setting "track_path" to the path of the track file as a string.
+
+        Args:
+            seed (int, optional): The random seed for the environment. Defaults to None.
+            options (dict, optional): Additional options for resetting the environment. Defaults to None.
+
+        Returns:
+            tuple: A tuple containing the observation and information about the environment.
+        """
         super().reset(seed=seed)
         self.__time_step = 0
         self.__car.reset()
@@ -618,7 +643,7 @@ class Car_env(gym.Env):
             gate.restore_gate()
         if options and "no_time_limit" in options:
             if options["no_time_limit"]:
-                self.__time_limit = sys.maxsize
+                self.__time_limit = np.inf
         else:
             self.__time_limit = 1000
 
@@ -701,15 +726,18 @@ class Car_env(gym.Env):
             pass
 
         # Update Reward Gates
-        if self.__remaining_reward_gates == 0:
-            reward += 10
-            for gate in self.__reward_gates:
-                gate.restore_gate()
-            self.__remaining_reward_gates = self.__total_reward_gates
         if self.__car.check_gate_passed(self.__reward_gates):
-            self.__passed_reward_gates += 1
             self.__remaining_reward_gates -= 1
-            reward += 1
+            if self.__remaining_reward_gates == 0:
+                # reward for completing a lap
+                reward += 10
+                for gate in self.__reward_gates:
+                    gate.restore_gate()
+                self.__remaining_reward_gates = self.__total_reward_gates
+            else:
+                # reward for passing a gate
+                reward += 1
+                self.__passed_reward_gates += 1
 
         self.__car.update(self.__boundaries)
         self.__time_step += 1
@@ -744,12 +772,21 @@ class Car_env(gym.Env):
             self.clock = pygame.time.Clock()
 
         canvas = pygame.Surface((self.__width, self.__height))
-        canvas.fill((30, 30, 30))
-        self.__car.draw(canvas)
+
+        canvas.fill((11, 102, 35))
+
+        # outer polygon
+        pygame.draw.polygon(canvas, "gray", self.__outer_track_points)
+        # inner polygon same color as background
+        pygame.draw.polygon(canvas, (11, 102, 35), self.__inner_track_points)
+
         for boundary in self.__boundaries:
-            boundary.draw(canvas)
+            boundary.draw(canvas, "black", 5)
+        self.__car.draw(canvas)
+
         for gate in self.__reward_gates:
             gate.draw(canvas)
+
         self.__car.draw_rays(canvas, self.__boundaries)
 
         if self.render_mode == "human":
@@ -770,9 +807,12 @@ class Car_env(gym.Env):
             pygame.quit()
 
 
-def main():
+def game_loop():
+    """
+    A simple game loop for testing the environment with arrow keys.
+    """
     env = Car_env(render_mode="human")
-    obs, _ = env.reset(options={"track_path": "tracks/track.json"})
+    _, _ = env.reset(options={"track_path": "tracks/track.json"})
     done = False
     while not done:
         # Wait until pygame is initialized
@@ -782,7 +822,15 @@ def main():
             keys = pygame.key.get_pressed()
 
             # Map the key inputs to actions
-            if keys[pygame.K_UP]:
+            if keys[pygame.K_UP] and keys[pygame.K_LEFT]:
+                action = 4
+            elif keys[pygame.K_UP] and keys[pygame.K_RIGHT]:
+                action = 5
+            elif keys[pygame.K_DOWN] and keys[pygame.K_LEFT]:
+                action = 6
+            elif keys[pygame.K_DOWN] and keys[pygame.K_RIGHT]:
+                action = 7
+            elif keys[pygame.K_UP]:
                 action = 0
             elif keys[pygame.K_DOWN]:
                 action = 1
@@ -790,12 +838,17 @@ def main():
                 action = 2
             elif keys[pygame.K_RIGHT]:
                 action = 3
+            else:
+                action = 8
 
-        obs, reward, done, _, info = env.step(action)
+        _, _, done, _, info = env.step(action)
         print(info)
         env.render()
     env.close()
 
 
 if __name__ == "__main__":
-    main()
+    register(
+        id="CarEnv-v0",
+        entry_point="car_env:Car_env",
+    )
