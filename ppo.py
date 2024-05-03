@@ -1,152 +1,265 @@
 import argparse
+import datetime
 import os
-import random
 import time
 from distutils.util import strtobool
+from typing import Callable, Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from gymnasium import Env
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 gym.register("CarEnv-v0", entry_point="car_env:Car_env")
 
-def parse_args():
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-        help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="CarEnv-v0",
-        help="the id of the gym environment")
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4,
-        help="the learning rate of the optimizer")
-    parser.add_argument("--seed", type=int, default=1,
-        help="seed of the experiment")
-    parser.add_argument("--total-timesteps", type=int, default=25000,
-        help="total timesteps of the experiments")
-    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, `torch.backends.cudnn.deterministic=False`")
-    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="ppo-implementation-details",
-        help="the wandb's project name")
-    parser.add_argument("--wandb-entity", type=str, default=None,
-        help="the entity (team) of wandb's project")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="weather to capture videos of the agent performances (check out `videos` folder)")
 
-    # Algorithm specific arguments
-    parser.add_argument("--num-envs", type=int, default=4,
-        help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128,
-        help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggle learning rate annealing for policy and value networks")
-    parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Use GAE for advantage computation")
-    parser.add_argument("--gamma", type=float, default=0.99,
-        help="the discount factor gamma")
-    parser.add_argument("--gae-lambda", type=float, default=0.95,
-        help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4,
-        help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=4,
-        help="the K epochs to update the policy")
-    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles advantages normalization")
-    parser.add_argument("--clip-coef", type=float, default=0.2,
-        help="the surrogate clipping coefficient")
-    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.01,
-        help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=0.5,
-        help="coefficient of the value function")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5,
-        help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None,
-        help="the target KL divergence threshold")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=os.path.basename(__file__).rstrip(".py"),
+        help="Name of the run",
+    )
+    parser.add_argument(
+        "--num-envs", type=int, default=4, help="Number of environments"
+    )
+    parser.add_argument(
+        "--total-timesteps",
+        type=int,
+        default=1000000,
+        help="Total number of timesteps to train the agent",
+    )
+    parser.add_argument(
+        "--num-steps",
+        type=int,
+        default=2048,
+        help="Number of steps per environment per policy rollout",
+    )
+    parser.add_argument(
+        "--track-path",
+        type=str,
+        default="tracks/track.json",
+        help="Path to directory/file where track is stored (in case of directory, it will be trained on all tracks in the directory)",
+    )
+    parser.add_argument(
+        "--cuda",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        nargs="?",
+        const=True,
+        help="Enable CUDA acceleration",
+    )
+    parser.add_argument(
+        "--capture-video",
+        type=lambda x: bool(strtobool(x)),
+        default=False,
+        nargs="?",
+        const=True,
+        help="Capture video of the training",
+    )
+    parser.add_argument(
+        "--learning-rate", type=float, default=3e-4, help="Learning rate"
+    )
+    parser.add_argument(
+        "--anneal-lr",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        nargs="?",
+        const=True,
+        help="Anneal learning rate",
+    )
+    parser.add_argument(
+        "--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True
+    )
+    parser.add_argument(
+        "--gamma", type=float, default=0.99, help="Discount factor for rewards"
+    )
+    parser.add_argument("--gae-lambda", type=float, default=0.95, help="Lambda for GAE")
+    parser.add_argument(
+        "--num-minibatches", type=int, default=4, help="Number of minibatches"
+    )
+    parser.add_argument(
+        "--update-epochs", type=int, default=4, help="Number of epochs to update policy"
+    )
+    parser.add_argument(
+        "--norm-adv",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        nargs="?",
+        const=True,
+        help="Normalize advantages",
+    )
+    parser.add_argument(
+        "--clip-coef", type=float, default=0.2, help="Clipping parameter for PPO"
+    )
+    parser.add_argument(
+        "--clip-vloss",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        nargs="?",
+        const=True,
+        help="Clip value loss",
+    )
+    parser.add_argument(
+        "--ent-coef", type=float, default=0.0, help="Entropy coefficient"
+    )
+    parser.add_argument(
+        "--vf-coef", type=float, default=0.5, help="Value function coefficient"
+    )
+    parser.add_argument(
+        "--max-grad-norm", type=float, default=0.5, help="Maximum gradient norm"
+    )
+    parser.add_argument(
+        "--target-kl", type=float, default=0.01, help="Target KL divergence"
+    )
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
+
     return args
 
 
-def make_env(gym_id, seed, idx, capture_video, run_name):
-    def thunk():
-        env = gym.make(gym_id, render_mode="rgb_array")
+import torch.nn as nn
+
+
+def make_env(
+    idx: int, capture_video: bool, run_name: str, track_path: str
+) -> Callable[[], gym.Env]:
+    """
+    Create a function that returns a gym environment.
+
+    Args:
+        idx (int): Index of the environment.
+        capture_video (bool): Flag indicating whether to capture video of the training.
+        run_name (str): Name of the run.
+        track_path (str): Path to directory/file where track is stored.
+
+    Returns:
+        Callable[[], gym.Env]: Function that returns a gym environment.
+    """
+
+    def thunk() -> gym.Env:
+        """
+        Create and initialize the gym environment.
+
+        Returns:
+            gym.Env: Initialized gym environment.
+        """
+        env = gym.make("CarEnv-v0", render_mode="rgb_array")
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(
                     env,
                     f"videos/{run_name}",
-                    episode_trigger=lambda episode_id: episode_id % 25 == 0,
+                    episode_trigger=lambda x: x % 10 == 0,
                 )
-        _ = env.reset(seed=seed)
+        _ = env.reset(options={"track_path": track_path})
         return env
 
     return thunk
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
+def layer_init(
+    layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0
+) -> nn.Module:
+    """
+    Initialize the weights and biases of a neural network layer.
+
+    Args:
+        layer (nn.Module): Neural network layer to initialize.
+        std (float, optional): Standard deviation for weight initialization. Defaults to np.sqrt(2).
+        bias_const (float, optional): Constant value for bias initialization. Defaults to 0.0.
+
+    Returns:
+        nn.Module: Initialized neural network layer.
+    """
+    nn.init.orthogonal_(layer.weight, std)
+    nn.init.constant_(layer.bias, bias_const)
     return layer
 
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    """
+    An agent that uses separate actor and critic networks to interact with an environment.
+    The actor network decides which action to take, and the critic network evaluates the
+    action by estimating the value function of the state.
+
+    Attributes:
+        critic (nn.Module): A neural network that predicts the value of each state.
+        actor (nn.Module): A neural network that outputs a probability distribution over actions.
+
+    Args:
+        envs (Env): A batched environment object which provides the observation space
+                    and action space properties, to determine the input and output dimensions
+                    of the neural networks.
+    """
+
+    def __init__(self, envs: Env):
         super(Agent, self).__init__()
+        obs_size = np.array(envs.single_observation_space.shape).prod()
+        act_size = envs.single_action_space.n
         self.critic = nn.Sequential(
-            layer_init(
-                nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)
-            ),
+            layer_init(nn.Linear(obs_size, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor = nn.Sequential(
-            layer_init(
-                nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)
-            ),
+            layer_init(nn.Linear(obs_size, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            layer_init(nn.Linear(64, act_size), std=0.01),
         )
 
-    def get_value(self, x):
+    def get_value(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the value of the current state.
+
+        Args:
+            x (torch.Tensor): The current state observation tensor.
+
+        Returns:
+            torch.Tensor: Estimated value of the state.
+        """
         return self.critic(x)
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(
+        self, x: torch.Tensor, action: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Determines the action to take for the current state and computes the value.
+
+        Args:
+            x (torch.Tensor): The current state observation tensor.
+            action (Optional[torch.Tensor]): Optional tensor specifying the action to evaluate.
+                                             If None, an action is sampled.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - sampled or provided action
+                - log probability of the action
+                - entropy of the action distribution
+                - estimated value of the state
+        """
         logits = self.actor(x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
-
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
+    run_name = (
+        f"{args.run_name}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -154,18 +267,11 @@ if __name__ == "__main__":
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
-
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    # env setup
     envs = gym.vector.SyncVectorEnv(
         [
-            make_env(args.gym_id, args.seed + i, i, args.capture_video, run_name)
+            make_env(i, args.capture_video, run_name, args.track_path)
             for i in range(args.num_envs)
         ]
     )
@@ -176,7 +282,6 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    # ALGO Logic: Storage setup
     obs = torch.zeros(
         (args.num_steps, args.num_envs) + envs.single_observation_space.shape
     ).to(device)
@@ -188,7 +293,6 @@ if __name__ == "__main__":
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
-    # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     next_obs = torch.Tensor(np.array(envs.reset()[0])).to(device)
@@ -331,20 +435,31 @@ if __name__ == "__main__":
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        # After every update cycle, record the metrics
+        writer.add_scalar("Loss/policy_loss", pg_loss.item(), global_step)
+        # Policy Loss (pg_loss): Indicates how well the policy network is performing. Monitoring this helps in understanding whether the agent's policy is improving and whether the actions chosen by the policy are leading to higher advantages.
+        writer.add_scalar("Loss/value_loss", v_loss.item(), global_step)
+        # Value Loss (v_loss): Reflects the accuracy of the value network's predictions about future rewards. It's essential to ensure that the value predictions are close to the actual returns, which aids in stable learning.
+        writer.add_scalar("Loss/entropy_loss", entropy_loss.item(), global_step)
+        # Entropy is used as a regularization term to encourage exploration by maintaining a diverse range of actions. Logging this helps monitor how varied the action selection is and whether the agent is exploring sufficiently during training.
+        writer.add_scalar("Loss/total_loss", loss.item(), global_step)
+        # Represents the combined effect of the policy, value, and entropy losses. It's critical for evaluating the overall performance of the agent's updates.
         writer.add_scalar(
-            "charts/learning_rate", optimizer.param_groups[0]["lr"], global_step
+            "Info/learning_rate", optimizer.param_groups[0]["lr"], global_step
         )
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        # Since the learning rate might be annealed (gradually reduced) during training, tracking it helps in understanding its impact on the loss metrics and overall training dynamics.
+        writer.add_scalar("Info/clip_fraction", np.mean(clipfracs), global_step)
+        # In Proximal Policy Optimization (PPO), the clipping parameter prevents large updates, which could destabilize learning. Logging the fraction of times the clipping is activated gives insights into how often the policy updates hit this boundary.
+        writer.add_scalar("Info/approx_kl", approx_kl.item(), global_step)
+        # This metric helps ensure that the updates to the policy are not too large, preserving learning stability. A sudden spike in KL divergence is an indicator that the policy changes too rapidly, which might lead to performance degradation.
+        writer.add_scalar("Info/explained_variance", explained_var, global_step)
+        # This shows how much of the variance in the rewards is explained by the value predictions. High explained variance is generally indicative of a well-performing value function.
+        writer.add_scalar("Misc/entropy", entropy.mean().item(), global_step)
+        # Again, entropy is logged under a miscellaneous category to track the randomness in action selection, reinforcing the agent's exploratory behavior.
         writer.add_scalar(
-            "charts/SPS", int(global_step / (time.time() - start_time)), global_step
+            "Environment/gates_passed", info["gates_passed"].mean(), global_step
         )
+        # This metric helps in understanding the agent's progress in the environment. It quantifies how well the agent is performing by counting the number of gates passed during training.
 
     envs.close()
     writer.close()

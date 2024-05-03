@@ -704,7 +704,7 @@ class Car_env(gym.Env):
         self.__passed_reward_gates = 0
         self.__remaining_reward_gates = self.__total_reward_gates
         self.__next_gate_index = 0
-        
+
         obs = self._get_obs()
         info = self._get_info()
         return obs, info
@@ -714,6 +714,8 @@ class Car_env(gym.Env):
         # action translation
         if action == 0:
             self.__car.move_car("forward")
+            # reward for moving forward
+            reward += 0.01
         elif action == 1:
             self.__car.move_car("backward")
         elif action == 2:
@@ -723,9 +725,11 @@ class Car_env(gym.Env):
         elif action == 4:
             self.__car.move_car("forward")
             self.__car.move_car("left")
+            reward += 0.01
         elif action == 5:
             self.__car.move_car("forward")
             self.__car.move_car("right")
+            reward += 0.01
         elif action == 6:
             self.__car.move_car("backward")
             self.__car.move_car("left")
