@@ -203,19 +203,31 @@ class Agent(nn.Module):
         super(Agent, self).__init__()
         obs_size = np.array(envs.single_observation_space.shape).prod()
         act_size = envs.single_action_space.n
+
+        # Critic Network
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(obs_size, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            layer_init(nn.Linear(obs_size, 128)),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            layer_init(nn.Linear(128, 128)),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            layer_init(nn.Linear(128, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 1), std=1.0),  # Output layer for critic
         )
+
+        # Actor Network
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(obs_size, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, act_size), std=0.01),
+            layer_init(nn.Linear(obs_size, 128)),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            layer_init(nn.Linear(128, 128)),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            layer_init(nn.Linear(128, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, act_size), std=0.01),  # Output layer for actor
         )
 
     def get_value(self, x: torch.Tensor) -> torch.Tensor:
@@ -252,7 +264,7 @@ class Agent(nn.Module):
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.get_value(x)
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
 if __name__ == "__main__":
