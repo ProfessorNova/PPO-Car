@@ -86,6 +86,7 @@ class Reward_gate(Boundary):
         y1: Union[int, float],
         x2: Union[int, float],
         y2: Union[int, float],
+        gate_index: int,
     ):
         """
         Initialize a Reward_gate object.
@@ -95,15 +96,16 @@ class Reward_gate(Boundary):
             y1 (Union[int, float]): y-coordinate of the starting point of the reward gate.
             x2 (Union[int, float]): x-coordinate of the ending point of the reward gate.
             y2 (Union[int, float]): y-coordinate of the ending point of the reward gate.
+            gate_index (int): The index of the reward gate.
         """
         super().__init__(x1, y1, x2, y2)
         self.__a = np.array([float(x1), float(y1)])
         self.__b = np.array([float(x2), float(y2)])
         self.__active: bool = True
+        self.__gate_index: int = gate_index
 
     def draw(self, screen: pygame.Surface, color: str = "green", thickness: int = 2):
-        if self.__active:
-            pygame.draw.line(screen, color, self.__a, self.__b, thickness)
+        pygame.draw.line(screen, color, self.__a, self.__b, thickness)
 
     def pass_gate(self):
         self.__active = False
@@ -113,6 +115,9 @@ class Reward_gate(Boundary):
 
     def is_active(self) -> bool:
         return self.__active
+
+    def get_index(self) -> int:
+        return self.__gate_index
 
 
 class Ray:
@@ -379,22 +384,20 @@ class Car:
                 return True
         return False
 
-    def check_gate_passed(self, gates: List[Reward_gate]) -> bool:
+    def get_passed_gate(self, gates: List[Reward_gate]) -> Union[Reward_gate, None]:
         """
-        Check if the car has passed through a active reward gate. If the car has passed through a reward gate, the gate
-        is deactivated.
+        Check if the car has passed through a active reward gate.
 
         Args:
             gates (List[Reward_gate]): A list of reward gates to check for intersection.
 
         Returns:
-            bool: True if the car has passed through a reward gate, False otherwise.
+            Union[Reward_gate, None]: The reward gate that the car has passed through, or None if no gate has been passed.
         """
         for gate in gates:
             if gate.is_active() and self.check_collision(gate):
-                gate.pass_gate()
-                return True
-        return False
+                return gate
+        return None
 
     def reset(self):
         self.__pos = self.__start_pos.copy()
@@ -517,19 +520,17 @@ class Car_env(gym.Env):
                 )
             )
 
-        for g in range(0, len(self.__reward_gates_points) - 1, 2):
+        for i, (g_start, g_end) in enumerate(
+            zip(self.__reward_gates_points[::2], self.__reward_gates_points[1::2])
+        ):
             self.__reward_gates.append(
-                Reward_gate(
-                    self.__reward_gates_points[g][0],
-                    self.__reward_gates_points[g][1],
-                    self.__reward_gates_points[g + 1][0],
-                    self.__reward_gates_points[g + 1][1],
-                )
+                Reward_gate(g_start[0], g_start[1], g_end[0], g_end[1], i)
             )
 
         self.__total_reward_gates = len(self.__reward_gates)
         self.__passed_reward_gates = 0
         self.__remaining_reward_gates = self.__total_reward_gates
+        self.__next_gate_index = 0
 
         # Define the action and observation space
         low_obs = np.array([0.0, 0.0, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
@@ -642,21 +643,24 @@ class Car_env(gym.Env):
         """
         super().reset(seed=seed)
         self.__time_step = 0
-        self.__car.reset()
-        self.__car.set_destroyed(False)
-        self.__passed_reward_gates = 0
-        self.__remaining_reward_gates = self.__total_reward_gates
-        for gate in self.__reward_gates:
-            gate.restore_gate()
         if options and "no_time_limit" in options:
             if options["no_time_limit"]:
                 self.__time_limit = np.inf
         else:
             self.__time_limit = 1000
 
+        self.__car.reset()
+        self.__car.set_destroyed(False)
+        for gate in self.__reward_gates:
+            gate.restore_gate()
+
         if options and "track_path" in options:
             track_path = options["track_path"]
-            self.__track_data = self.load_track(track_path)
+            try:
+                self.__track_data = self.load_track(track_path)
+            except FileNotFoundError:
+                print(f"Track file not found at {track_path}.")
+                return
 
             self.__outer_track_points = self.__track_data["outer_track_points"]
             self.__inner_track_points = self.__track_data["inner_track_points"]
@@ -689,19 +693,18 @@ class Car_env(gym.Env):
                     )
                 )
 
-            for g in range(0, len(self.__reward_gates_points) - 1, 2):
+            for i, (g_start, g_end) in enumerate(
+                zip(self.__reward_gates_points[::2], self.__reward_gates_points[1::2])
+            ):
                 self.__reward_gates.append(
-                    Reward_gate(
-                        self.__reward_gates_points[g][0],
-                        self.__reward_gates_points[g][1],
-                        self.__reward_gates_points[g + 1][0],
-                        self.__reward_gates_points[g + 1][1],
-                    )
+                    Reward_gate(g_start[0], g_start[1], g_end[0], g_end[1], i)
                 )
 
-            self.__total_reward_gates = len(self.__reward_gates)
-            self.__passed_reward_gates = 0
-            self.__remaining_reward_gates = self.__total_reward_gates
+        self.__total_reward_gates = len(self.__reward_gates)
+        self.__passed_reward_gates = 0
+        self.__remaining_reward_gates = self.__total_reward_gates
+        self.__next_gate_index = 0
+        
         obs = self._get_obs()
         info = self._get_info()
         return obs, info
@@ -733,18 +736,25 @@ class Car_env(gym.Env):
             pass
 
         # Update Reward Gates
-        if self.__car.check_gate_passed(self.__reward_gates):
+        gate = self.__car.get_passed_gate(self.__reward_gates)
+        if gate is not None and gate.get_index() == self.__next_gate_index:
             self.__remaining_reward_gates -= 1
+            # If all gates are passed, reset them
             if self.__remaining_reward_gates == 0:
+                gate.pass_gate()
                 # reward for completing a lap
                 reward += 10
+                self.__passed_reward_gates += 1
                 for gate in self.__reward_gates:
                     gate.restore_gate()
                 self.__remaining_reward_gates = self.__total_reward_gates
+                self.__next_gate_index = 0
             else:
+                gate.pass_gate()
                 # reward for passing a gate
                 reward += 1
                 self.__passed_reward_gates += 1
+                self.__next_gate_index += 1
 
         self.__car.update(self.__boundaries)
         self.__time_step += 1
@@ -792,7 +802,11 @@ class Car_env(gym.Env):
         self.__car.draw(canvas)
 
         for gate in self.__reward_gates:
-            gate.draw(canvas)
+            if gate.is_active():
+                if gate.get_index() == self.__next_gate_index:
+                    gate.draw(canvas, "yellow", 5)
+                else:
+                    gate.draw(canvas, "green", 5)
 
         self.__car.draw_rays(canvas, self.__boundaries)
 
@@ -819,7 +833,7 @@ def game_loop():
     A simple game loop for testing the environment with arrow keys.
     """
     env = Car_env(render_mode="human")
-    _, _ = env.reset(options={"track_path": "tracks/track.json"})
+    _, _ = env.reset(options={"track_path": "tracks/track.json", "no_time_limit": True})
     done = False
     while not done:
         # Wait until pygame is initialized
