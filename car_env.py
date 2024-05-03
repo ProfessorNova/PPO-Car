@@ -5,7 +5,6 @@ import gymnasium as gym
 import numpy as np
 import pygame
 from gymnasium import spaces
-from gymnasium.envs.registration import register
 
 
 def draw_rectangle(
@@ -128,6 +127,12 @@ class Ray:
         """
         self.__pos = np.array([float(x), float(y)])
         self.__dir = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle))])
+
+    def get_position(self) -> np.ndarray:
+        return self.__pos
+
+    def get_direction(self) -> np.ndarray:
+        return self.__dir
 
     def draw(self, screen: pygame.Surface, color: str = "white", thickness: int = 1):
         pygame.draw.line(
@@ -333,12 +338,12 @@ class Car:
             intersection.
             color (str, optional): The color of the rays. Defaults to "white".
         """
+        distances = self.get_distances(boundary)
         for ray in self.__rays:
-            ray.draw(screen, color)
-            for b in boundary:
-                pt = ray.cast(b)
-                if pt is not None:
-                    pygame.draw.circle(screen, "red", pt, 5)
+            # Draw the ray with the correct length
+            pt = ray.get_position() + ray.get_direction() * distances.pop(0)
+            pygame.draw.line(screen, color, ray.get_position(), pt)
+            pygame.draw.circle(screen, "red", pt.astype(int), 5)
 
     def get_distances(self, boundary: Union[Boundary, List[Boundary]]) -> List[float]:
         """
@@ -454,7 +459,7 @@ class Car:
 
 
 class Car_env(gym.Env):
-    metadata = {"render.modes": ["human", "rgb_array"], "render_fps": 60}
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
     def __init__(
         self, render_mode: Optional[str] = None, track_path: str = "tracks/track.json"
@@ -466,6 +471,8 @@ class Car_env(gym.Env):
             render_mode (Optional[str], optional): The rendering mode. Defaults to None.
             track (str, optional): The path to the track file. Defaults to "tracks/track.json".
         """
+        super(Car_env, self).__init__()
+
         self.__width: int = 1280
         self.__height: int = 720
         self.__time_step: int = 0
@@ -525,20 +532,20 @@ class Car_env(gym.Env):
         self.__remaining_reward_gates = self.__total_reward_gates
 
         # Define the action and observation space
-        low_obs = np.array([0.0, 0.0, -1.0, -1.0, -1.0, -1.0])
-        high_obs = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        low_obs = np.array([0.0, 0.0, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
+        high_obs = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32)
 
         # Append the rays distances to the observation space
         for _ in range(self.__car.get_num_rays()):
-            low_obs = np.append(low_obs, 0.0)
-            high_obs = np.append(high_obs, 1.0)
+            low_obs = np.append(low_obs, np.float32(0.0))
+            high_obs = np.append(high_obs, np.float32(1.0))
 
         self.observation_space = spaces.Box(
             low=low_obs, high=high_obs, dtype=np.float32
         )
         self.action_space = spaces.Discrete(9)
 
-        assert render_mode is None or render_mode in self.metadata["render.modes"]
+        assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
         self.window = None
@@ -611,7 +618,7 @@ class Car_env(gym.Env):
         for d in distances:
             obs.append(d / 1000.0)  # Normalize the distance
 
-        obs = np.array(obs)
+        obs = np.array(obs, dtype=np.float32)
 
         return obs
 
@@ -848,7 +855,4 @@ def game_loop():
 
 
 if __name__ == "__main__":
-    register(
-        id="CarEnv-v0",
-        entry_point="car_env:Car_env",
-    )
+    game_loop()

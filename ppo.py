@@ -12,8 +12,7 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from car_env import Car_env
-
+gym.register("CarEnv-v0", entry_point="car_env:Car_env")
 
 def parse_args():
     # fmt: off
@@ -80,8 +79,7 @@ def parse_args():
 
 def make_env(gym_id, seed, idx, capture_video, run_name):
     def thunk():
-        env = Car_env(render_mode="rgb_array")
-        # env = gym.make(gym_id, render_mode="rgb_array")
+        env = gym.make(gym_id, render_mode="rgb_array")
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(
