@@ -13,6 +13,7 @@ import torch.optim as optim
 from gymnasium import Env
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 gym.register("CarEnv-v0", entry_point="car_env:Car_env")
 
@@ -37,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num-steps",
         type=int,
-        default=2048,
+        default=1000,
         help="Number of steps per environment per policy rollout",
     )
     parser.add_argument(
@@ -79,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gamma", type=float, default=0.99, help="Discount factor for rewards"
     )
-    parser.add_argument("--gae-lambda", type=float, default=0.95, help="Lambda for GAE")
+    parser.add_argument("--gae-lambda", type=float, default=0.97, help="Lambda for GAE")
     parser.add_argument(
         "--num-minibatches", type=int, default=4, help="Number of minibatches"
     )
@@ -156,7 +157,6 @@ def make_env(
                 env = gym.wrappers.RecordVideo(
                     env,
                     f"videos/{run_name}",
-                    episode_trigger=lambda x: x % 10 == 0,
                 )
         _ = env.reset(options={"track_path": track_path})
         return env
@@ -311,14 +311,16 @@ if __name__ == "__main__":
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
-    for update in range(1, num_updates + 1):
+    for update in tqdm(
+        range(1, num_updates + 1), desc="Training Progress", total=num_updates
+    ):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
-        for step in range(0, args.num_steps):
+        for step in tqdm(range(args.num_steps), desc="Environment Steps", leave=False):
             global_step += 1 * args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
