@@ -301,8 +301,14 @@ class Car:
     def set_position(self, x: Union[int, float], y: Union[int, float]):
         self.__pos = np.array([float(x), float(y)])
 
+    def set_initial_position(self, x: Union[int, float], y: Union[int, float]):
+        self.__start_pos = np.array([float(x), float(y)])
+
     def set_rotation(self, rotation: float):
         self.__rotation = rotation
+
+    def set_initial_rotation(self, rotation: float):
+        self.__start_rotation = rotation
 
     def draw(self, screen: pygame.Surface):
         """
@@ -464,9 +470,7 @@ class Car:
 class Car_env(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(
-        self, render_mode: Optional[str] = None, track_path: str = "tracks/track.json"
-    ):
+    def __init__(self, render_mode: Optional[str] = None):
         """
         Initialize the Car_env object.
 
@@ -481,56 +485,12 @@ class Car_env(gym.Env):
         self.__time_step: int = 0
         self.__time_limit: int = 1000
 
-        try:
-            self.__track_data = self.load_track(track_path)
-        except FileNotFoundError:
-            print(f"Track file not found at {track_path}.")
-            return
-
         self.__car = Car(
-            self.__track_data["initial_position"][0],
-            self.__track_data["initial_position"][1],
-            self.__track_data["initial_angle"],
-            "car.png",
+            0,
+            0,
+            image="car.png",
+            num_rays=8,
         )
-
-        self.__outer_track_points = self.__track_data["outer_track_points"]
-        self.__inner_track_points = self.__track_data["inner_track_points"]
-        self.__reward_gates_points = self.__track_data["reward_gates"]
-
-        self.__boundaries = []
-        self.__reward_gates = []
-        for b in range(len(self.__outer_track_points) - 1):
-            self.__boundaries.append(
-                Boundary(
-                    self.__outer_track_points[b][0],
-                    self.__outer_track_points[b][1],
-                    self.__outer_track_points[b + 1][0],
-                    self.__outer_track_points[b + 1][1],
-                )
-            )
-
-        for b in range(len(self.__inner_track_points) - 1):
-            self.__boundaries.append(
-                Boundary(
-                    self.__inner_track_points[b][0],
-                    self.__inner_track_points[b][1],
-                    self.__inner_track_points[b + 1][0],
-                    self.__inner_track_points[b + 1][1],
-                )
-            )
-
-        for i, (g_start, g_end) in enumerate(
-            zip(self.__reward_gates_points[::2], self.__reward_gates_points[1::2])
-        ):
-            self.__reward_gates.append(
-                Reward_gate(g_start[0], g_start[1], g_end[0], g_end[1], i)
-            )
-
-        self.__total_reward_gates = len(self.__reward_gates)
-        self.__passed_reward_gates = 0
-        self.__remaining_reward_gates = self.__total_reward_gates
-        self.__next_gate_index = 0
 
         # Define the action and observation space
         low_obs = np.array([0.0, 0.0, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
@@ -642,6 +602,7 @@ class Car_env(gym.Env):
             tuple: A tuple containing the observation and information about the environment.
         """
         super().reset(seed=seed)
+
         self.__time_step = 0
         if options and "no_time_limit" in options:
             if options["no_time_limit"]:
@@ -649,61 +610,71 @@ class Car_env(gym.Env):
         else:
             self.__time_limit = 1000
 
-        self.__car.reset()
-        self.__car.set_destroyed(False)
-        for gate in self.__reward_gates:
-            gate.restore_gate()
-
         if options and "track_path" in options:
+            # coustom track path
             track_path = options["track_path"]
             try:
                 self.__track_data = self.load_track(track_path)
             except FileNotFoundError:
                 print(f"Track file not found at {track_path}.")
                 return
+        else:
+            # default track path
+            track_path = "tracks/track.json"
+            try:
+                self.__track_data = self.load_track(track_path)
+            except FileNotFoundError:
+                print(f"Track file not found at {track_path}.")
+                return
 
-            self.__outer_track_points = self.__track_data["outer_track_points"]
-            self.__inner_track_points = self.__track_data["inner_track_points"]
-            self.__reward_gates_points = self.__track_data["reward_gates"]
-            self.__car.set_position(
-                self.__track_data["initial_position"][0],
-                self.__track_data["initial_position"][1],
+        self.__outer_track_points = self.__track_data["outer_track_points"]
+        self.__inner_track_points = self.__track_data["inner_track_points"]
+        self.__reward_gates_points = self.__track_data["reward_gates"]
+        self.__car.set_position(
+            self.__track_data["initial_position"][0],
+            self.__track_data["initial_position"][1],
+        )
+        self.__car.set_initial_position(
+            self.__track_data["initial_position"][0],
+            self.__track_data["initial_position"][1],
+        )
+        self.__car.set_rotation(self.__track_data["initial_angle"])
+        self.__car.set_initial_rotation(self.__track_data["initial_angle"])
+        self.__boundaries = []
+        self.__reward_gates = []
+        for b in range(len(self.__outer_track_points) - 1):
+            self.__boundaries.append(
+                Boundary(
+                    self.__outer_track_points[b][0],
+                    self.__outer_track_points[b][1],
+                    self.__outer_track_points[b + 1][0],
+                    self.__outer_track_points[b + 1][1],
+                )
             )
-            self.__car.set_rotation(self.__track_data["initial_angle"])
-
-            self.__boundaries = []
-            self.__reward_gates = []
-            for b in range(len(self.__outer_track_points) - 1):
-                self.__boundaries.append(
-                    Boundary(
-                        self.__outer_track_points[b][0],
-                        self.__outer_track_points[b][1],
-                        self.__outer_track_points[b + 1][0],
-                        self.__outer_track_points[b + 1][1],
-                    )
+        for b in range(len(self.__inner_track_points) - 1):
+            self.__boundaries.append(
+                Boundary(
+                    self.__inner_track_points[b][0],
+                    self.__inner_track_points[b][1],
+                    self.__inner_track_points[b + 1][0],
+                    self.__inner_track_points[b + 1][1],
                 )
-
-            for b in range(len(self.__inner_track_points) - 1):
-                self.__boundaries.append(
-                    Boundary(
-                        self.__inner_track_points[b][0],
-                        self.__inner_track_points[b][1],
-                        self.__inner_track_points[b + 1][0],
-                        self.__inner_track_points[b + 1][1],
-                    )
-                )
-
-            for i, (g_start, g_end) in enumerate(
-                zip(self.__reward_gates_points[::2], self.__reward_gates_points[1::2])
-            ):
-                self.__reward_gates.append(
-                    Reward_gate(g_start[0], g_start[1], g_end[0], g_end[1], i)
-                )
-
+            )
+        for i, (g_start, g_end) in enumerate(
+            zip(self.__reward_gates_points[::2], self.__reward_gates_points[1::2])
+        ):
+            self.__reward_gates.append(
+                Reward_gate(g_start[0], g_start[1], g_end[0], g_end[1], i)
+            )
         self.__total_reward_gates = len(self.__reward_gates)
         self.__passed_reward_gates = 0
         self.__remaining_reward_gates = self.__total_reward_gates
         self.__next_gate_index = 0
+
+        self.__car.reset()
+        self.__car.set_destroyed(False)
+        for gate in self.__reward_gates:
+            gate.restore_gate()
 
         obs = self._get_obs()
         info = self._get_info()

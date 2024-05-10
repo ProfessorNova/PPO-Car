@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import glob
 import os
 import time
 from distutils.util import strtobool
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "--track-path",
         type=str,
         default="tracks/track.json",
-        help="Path to directory/file where track is stored (in case of directory, it will be trained on all tracks in the directory)",
+        help="Path to json files containing track information",
     )
     parser.add_argument(
         "--cuda",
@@ -64,7 +65,22 @@ def parse_args() -> argparse.Namespace:
         help="Capture video of the training",
     )
     parser.add_argument(
-        "--learning-rate", type=float, default=3e-4, help="Learning rate"
+        "--policy-learning-rate",
+        type=float,
+        default=3e-4,
+        help="Learning rate for policy network",
+    )
+    parser.add_argument(
+        "--value-function-learning-rate",
+        type=float,
+        default=1e-3,
+        help="Learning rate for value function network",
+    )
+    parser.add_argument(
+        "--hidden-size",
+        type=lambda x: tuple(map(int, x.split(","))),
+        default=(64, 64),
+        help="Tuple indicating the size of hidden layers in the form (size1, size2)",
     )
     parser.add_argument(
         "--anneal-lr",
@@ -138,7 +154,7 @@ def make_env(
         idx (int): Index of the environment.
         capture_video (bool): Flag indicating whether to capture video of the training.
         run_name (str): Name of the run.
-        track_path (str): Path to directory/file where track is stored.
+        track_path (str): Path to the track file.
 
     Returns:
         Callable[[], gym.Env]: Function that returns a gym environment.
@@ -151,13 +167,13 @@ def make_env(
         Returns:
             gym.Env: Initialized gym environment.
         """
+
         env = gym.make("CarEnv-v0", render_mode="rgb_array")
-        if capture_video:
-            if idx == 0:
-                env = gym.wrappers.RecordVideo(
-                    env,
-                    f"videos/{run_name}",
-                )
+        if capture_video and idx == 1:
+            env = gym.wrappers.RecordVideo(
+                env,
+                f"videos/{run_name}",
+            )
         _ = env.reset(options={"track_path": track_path})
         return env
 
@@ -197,37 +213,38 @@ class Agent(nn.Module):
         envs (Env): A batched environment object which provides the observation space
                     and action space properties, to determine the input and output dimensions
                     of the neural networks.
+        hidden_size (Tuple[int]): Tuple indicating the size of hidden layers in the form (size1, size2).
     """
 
-    def __init__(self, envs: Env):
+    def __init__(self, envs: Env, hidden_size: Tuple[int]):
         super(Agent, self).__init__()
         obs_size = np.array(envs.single_observation_space.shape).prod()
         act_size = envs.single_action_space.n
 
         # Critic Network
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(obs_size, 128)),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
-            layer_init(nn.Linear(128, 128)),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
-            layer_init(nn.Linear(128, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, 1), std=1.0),  # Output layer for critic
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
+            nn.Tanh(),
+            nn.BatchNorm1d(hidden_size[0]),
+            layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
+            nn.Tanh(),
+            nn.BatchNorm1d(hidden_size[1]),
+            layer_init(
+                nn.Linear(hidden_size[1], 1), std=1.0
+            ),  # Output layer for critic
         )
 
         # Actor Network
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(obs_size, 128)),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
-            layer_init(nn.Linear(128, 128)),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
-            layer_init(nn.Linear(128, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, act_size), std=0.01),  # Output layer for actor
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
+            nn.Tanh(),
+            nn.BatchNorm1d(hidden_size[0]),
+            layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
+            nn.Tanh(),
+            nn.BatchNorm1d(hidden_size[1]),
+            layer_init(
+                nn.Linear(hidden_size[1], act_size), std=0.01
+            ),  # Output layer for actor
         )
 
     def get_value(self, x: torch.Tensor) -> torch.Tensor:
@@ -291,8 +308,13 @@ if __name__ == "__main__":
         envs.single_action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    agent = Agent(envs, args.hidden_size).to(device)
+    optimizer_policy = optim.Adam(
+        agent.actor.parameters(), lr=args.policy_learning_rate, eps=1e-5
+    )
+    optimizer_value = optim.Adam(
+        agent.critic.parameters(), lr=args.value_function_learning_rate, eps=1e-5
+    )
 
     obs = torch.zeros(
         (args.num_steps, args.num_envs) + envs.single_observation_space.shape
@@ -307,7 +329,10 @@ if __name__ == "__main__":
 
     global_step = 0
     start_time = time.time()
-    next_obs = torch.Tensor(np.array(envs.reset()[0])).to(device)
+
+    next_obs = torch.Tensor(
+        np.array(envs.reset(options={"track_path": args.track_path})[0])
+    ).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
 
@@ -317,8 +342,16 @@ if __name__ == "__main__":
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+
+            # Annealing the policy learning rate
+            lr_policy_now = frac * args.policy_learning_rate
+            for param_group in optimizer_policy.param_groups:
+                param_group["lr"] = lr_policy_now
+
+            # Annealing the value function learning rate
+            lr_value_now = frac * args.value_function_learning_rate
+            for param_group in optimizer_value.param_groups:
+                param_group["lr"] = lr_value_now
 
         for step in tqdm(range(args.num_steps), desc="Environment Steps", leave=False):
             global_step += 1 * args.num_envs
@@ -418,6 +451,12 @@ if __name__ == "__main__":
                 )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
+                # Reset gradients for policy optimizer
+                optimizer_policy.zero_grad()
+                pg_loss.backward()
+                nn.utils.clip_grad_norm_(agent.actor.parameters(), args.max_grad_norm)
+                optimizer_policy.step()
+
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
@@ -436,10 +475,11 @@ if __name__ == "__main__":
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                optimizer.step()
+                # Reset gradients for value function optimizer
+                optimizer_value.zero_grad()
+                v_loss.backward()
+                nn.utils.clip_grad_norm_(agent.critic.parameters(), args.max_grad_norm)
+                optimizer_value.step()
 
             if args.target_kl is not None:
                 if approx_kl > args.target_kl:
@@ -459,7 +499,14 @@ if __name__ == "__main__":
         writer.add_scalar("Loss/total_loss", loss.item(), global_step)
         # Represents the combined effect of the policy, value, and entropy losses. It's critical for evaluating the overall performance of the agent's updates.
         writer.add_scalar(
-            "Info/learning_rate", optimizer.param_groups[0]["lr"], global_step
+            "Info/policy_learning_rate",
+            optimizer_policy.param_groups[0]["lr"],
+            global_step,
+        )
+        writer.add_scalar(
+            "Info/value_function_learning_rate",
+            optimizer_value.param_groups[0]["lr"],
+            global_step,
         )
         # Since the learning rate might be annealed (gradually reduced) during training, tracking it helps in understanding its impact on the loss metrics and overall training dynamics.
         writer.add_scalar("Info/clip_fraction", np.mean(clipfracs), global_step)
