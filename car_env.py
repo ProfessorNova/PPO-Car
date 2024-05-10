@@ -470,13 +470,15 @@ class Car:
 class Car_env(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
 
-    def __init__(self, render_mode: Optional[str] = None):
+    def __init__(
+        self, render_mode: Optional[str] = None, track_path: str = "tracks/track.json"
+    ):
         """
         Initialize the Car_env object.
 
         Args:
             render_mode (Optional[str], optional): The rendering mode. Defaults to None.
-            track (str, optional): The path to the track file. Defaults to "tracks/track.json".
+            track_path (str, optional): The path to the track file. Defaults to "tracks/track.json".
         """
         super(Car_env, self).__init__()
 
@@ -489,8 +491,9 @@ class Car_env(gym.Env):
             0,
             0,
             image="car.png",
-            num_rays=8,
         )
+
+        self.__current_track_path: str = track_path
 
         # Define the action and observation space
         low_obs = np.array([0.0, 0.0, -1.0, -1.0, -1.0, -1.0], dtype=np.float32)
@@ -611,20 +614,12 @@ class Car_env(gym.Env):
             self.__time_limit = 1000
 
         if options and "track_path" in options:
-            # coustom track path
-            track_path = options["track_path"]
+            # set the new track path
+            self.__current_track_path = options["track_path"]
             try:
-                self.__track_data = self.load_track(track_path)
+                self.__track_data = self.load_track(self.__current_track_path)
             except FileNotFoundError:
-                print(f"Track file not found at {track_path}.")
-                return
-        else:
-            # default track path
-            track_path = "tracks/track.json"
-            try:
-                self.__track_data = self.load_track(track_path)
-            except FileNotFoundError:
-                print(f"Track file not found at {track_path}.")
+                print(f"Track file not found at {self.__current_track_path}.")
                 return
 
         self.__outer_track_points = self.__track_data["outer_track_points"]
@@ -675,6 +670,7 @@ class Car_env(gym.Env):
         self.__car.set_destroyed(False)
         for gate in self.__reward_gates:
             gate.restore_gate()
+        self.__car.update(self.__boundaries)
 
         obs = self._get_obs()
         info = self._get_info()
@@ -738,7 +734,7 @@ class Car_env(gym.Env):
         terminated = False
         if self.__car.is_destroyed():
             terminated = True
-            reward -= 2
+            reward -= 3
         elif self.__time_step >= self.__time_limit:
             terminated = True
 
