@@ -1,8 +1,6 @@
 import argparse
 import datetime
-import glob
 import os
-import time
 from distutils.util import strtobool
 from typing import Callable, Optional, Tuple
 
@@ -31,16 +29,10 @@ def parse_args() -> argparse.Namespace:
         "--num-envs", type=int, default=4, help="Number of environments"
     )
     parser.add_argument(
-        "--total-timesteps",
-        type=int,
-        default=1000000,
-        help="Total number of timesteps to train the agent",
+        "--steps-per-epoch", type=int, default=4000, help="Number of steps per epoch"
     )
     parser.add_argument(
-        "--num-steps",
-        type=int,
-        default=1000,
-        help="Number of steps per environment per policy rollout",
+        "--epochs", type=int, default=200, help="Number of epochs to train"
     )
     parser.add_argument(
         "--track-path",
@@ -65,6 +57,14 @@ def parse_args() -> argparse.Namespace:
         help="Capture video of the training",
     )
     parser.add_argument(
+        "--anneal-lr",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        nargs="?",
+        const=True,
+        help="Anneal learning rate",
+    )
+    parser.add_argument(
         "--policy-learning-rate",
         type=float,
         default=3e-4,
@@ -77,40 +77,21 @@ def parse_args() -> argparse.Namespace:
         help="Learning rate for value function network",
     )
     parser.add_argument(
+        "--train-iterations",
+        type=int,
+        default=80,
+        help="Number of iterations to train the policy network",
+    )
+    parser.add_argument(
         "--hidden-size",
         type=lambda x: tuple(map(int, x.split(","))),
         default=(64, 64),
         help="Tuple indicating the size of hidden layers in the form (size1, size2)",
     )
     parser.add_argument(
-        "--anneal-lr",
-        type=lambda x: bool(strtobool(x)),
-        default=True,
-        nargs="?",
-        const=True,
-        help="Anneal learning rate",
-    )
-    parser.add_argument(
-        "--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True
-    )
-    parser.add_argument(
         "--gamma", type=float, default=0.99, help="Discount factor for rewards"
     )
     parser.add_argument("--gae-lambda", type=float, default=0.97, help="Lambda for GAE")
-    parser.add_argument(
-        "--num-minibatches", type=int, default=4, help="Number of minibatches"
-    )
-    parser.add_argument(
-        "--update-epochs", type=int, default=4, help="Number of epochs to update policy"
-    )
-    parser.add_argument(
-        "--norm-adv",
-        type=lambda x: bool(strtobool(x)),
-        default=True,
-        nargs="?",
-        const=True,
-        help="Normalize advantages",
-    )
     parser.add_argument(
         "--clip-coef", type=float, default=0.2, help="Clipping parameter for PPO"
     )
@@ -123,7 +104,7 @@ def parse_args() -> argparse.Namespace:
         help="Clip value loss",
     )
     parser.add_argument(
-        "--ent-coef", type=float, default=0.0, help="Entropy coefficient"
+        "--ent-coef", type=float, default=0.001, help="Entropy coefficient"
     )
     parser.add_argument(
         "--vf-coef", type=float, default=0.5, help="Value function coefficient"
@@ -135,9 +116,6 @@ def parse_args() -> argparse.Namespace:
         "--target-kl", type=float, default=0.01, help="Target KL divergence"
     )
     args = parser.parse_args()
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-
     return args
 
 
@@ -169,7 +147,7 @@ def make_env(
         """
 
         env = gym.make("CarEnv-v0", render_mode="rgb_array")
-        if capture_video and idx == 1:
+        if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(
                 env,
                 f"videos/{run_name}",
@@ -225,26 +203,19 @@ class Agent(nn.Module):
         self.critic = nn.Sequential(
             layer_init(nn.Linear(obs_size, hidden_size[0])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[0]),
             layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[1]),
-            layer_init(
-                nn.Linear(hidden_size[1], 1), std=1.0
-            ),  # Output layer for critic
+            layer_init(nn.Linear(hidden_size[1], 1)),  # Output the value of the state
         )
 
         # Actor Network
         self.actor = nn.Sequential(
             layer_init(nn.Linear(obs_size, hidden_size[0])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[0]),
             layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[1]),
-            layer_init(
-                nn.Linear(hidden_size[1], act_size), std=0.01
-            ),  # Output layer for actor
+            layer_init(nn.Linear(hidden_size[1], act_size)),
+            nn.Softmax(dim=-1),  # Apply softmax activation for discrete action space
         )
 
     def get_value(self, x: torch.Tensor) -> torch.Tensor:
@@ -284,8 +255,149 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
+def compute_gae(next_value, rewards, dones, values, gamma, gae_lambda):
+    """
+    Calculate Generalized Advantage Estimation (GAE) for vectorized environments.
+
+    Args:
+        next_value (torch.Tensor): The value estimate of the next state for each environment.
+        rewards (torch.Tensor): Rewards received after each action for each environment.
+        dones (torch.Tensor): Boolean tensor indicating which episodes have finished for each environment.
+        values (torch.Tensor): Value estimates for each state in the buffer for each environment.
+        gamma (float): Discount factor.
+        gae_lambda (float): GAE lambda parameter for weighting advantages.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: Tuple containing:
+            - returns (torch.Tensor): Computed returns for each timestep and each environment.
+            - advs (torch.Tensor): Computed advantages for each timestep and each environment.
+    """
+    num_steps, num_envs = rewards.size()
+    advs = torch.zeros((num_steps, num_envs), device=rewards.device)
+    mask = ~dones
+    mask = mask.float()
+    lastgaelam = torch.zeros(num_envs, device=rewards.device)
+
+    for t in reversed(range(num_steps)):
+        if t == num_steps - 1:
+            next_non_terminal = mask[t]
+            next_values = next_value.squeeze()
+        else:
+            next_non_terminal = mask[t + 1]
+            next_values = values[t + 1].squeeze()
+
+        delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
+        lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
+        advs[t] = lastgaelam
+
+    returns = advs + values
+    return returns, advs
+
+
+def ppo_update(
+    agent,
+    optimizer_policy,
+    optimizer_value,
+    obs,
+    actions,
+    logprobs_old,
+    returns,
+    advantages,
+    clip_coef,
+    ent_coef,
+    vf_coef,
+    max_grad_norm,
+):
+    """
+    Perform a PPO update on policy and value networks. This function adjusts the policy
+    and value networks by performing gradient descent on batches of data.
+
+    Args:
+        agent (nn.Module): The agent containing the policy and value networks.
+        optimizer_policy (torch.optim.Optimizer): Optimizer for the policy network.
+        optimizer_value (torch.optim.Optimizer): Optimizer for the value network.
+        obs (torch.Tensor): Observations, shape [num_steps, num_envs, obs_dim].
+        actions (torch.Tensor): Actions taken, shape [num_steps, num_envs].
+        log_probs_old (torch.Tensor): Log probabilities of the actions under the old policy, shape [num_steps, num_envs].
+        returns (torch.Tensor): Computed returns, shape [num_steps, num_envs].
+        advantages (torch.Tensor): Computed advantages, shape [num_steps, num_envs].
+        clip_coef (float): Clipping coefficient for PPO.
+        ent_coef (float): Entropy coefficient to encourage exploration.
+        vf_coef (float): Coefficient for the value function loss.
+        max_grad_norm (float): Maximum norm for gradient clipping.
+
+    Returns:
+        Tuple[float, float, float]: Policy loss, value loss, and entropy loss.
+    """
+    # Forward pass to get outputs from the agent
+    logits, log_probs, entropy, values = agent.get_action_and_value(obs, actions)
+
+    # Calculate the ratio (pi_theta / pi_theta_old)
+    ratios = torch.exp(log_probs - logprobs_old.detach())
+
+    # Calculate surrogate losses
+    surr1 = ratios * advantages
+    surr2 = torch.clamp(ratios, 1.0 - clip_coef, 1.0 + clip_coef) * advantages
+    policy_loss = -torch.min(surr1, surr2).mean()
+
+    # Value loss using the Bellman equation
+    value_loss = (returns - values.squeeze(-1)).pow(2).mean()
+
+    # Total loss
+    loss = policy_loss + vf_coef * value_loss - ent_coef * entropy.mean()
+
+    # Perform backpropagation
+    optimizer_policy.zero_grad()
+    optimizer_value.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(agent.parameters(), max_grad_norm)
+
+    # Optimization step
+    optimizer_policy.step()
+    optimizer_value.step()
+
+    return policy_loss.item(), value_loss.item(), entropy.mean().item()
+
+
+def record_metrics(
+    writer,
+    global_step,
+    policy_loss,
+    value_loss,
+    entropy_loss,
+    scheduler_policy,
+    scheduler_value,
+):
+    """
+    Record training metrics to TensorBoard.
+
+    Args:
+        writer (SummaryWriter): TensorBoard writer.
+        global_step (int): Current step number in total across all epochs.
+        policy_loss (float): Recent policy loss computed.
+        value_loss (float): Recent value loss computed.
+        entropy_loss (float): Recent entropy loss computed.
+        args (argparse.Namespace): Parsed command-line arguments.
+    """
+    writer.add_scalar("Loss/policy_loss", policy_loss, global_step)
+    writer.add_scalar("Loss/value_loss", value_loss, global_step)
+    writer.add_scalar("Loss/entropy_loss", entropy_loss, global_step)
+    writer.add_scalar(
+        "Parameters/policy_learning_rate",
+        scheduler_policy.get_last_lr()[0],
+        global_step,
+    )
+    writer.add_scalar(
+        "Parameters/value_function_learning_rate",
+        scheduler_value.get_last_lr()[0],
+        global_step,
+    )
+
+
 if __name__ == "__main__":
     args = parse_args()
+
+    # Set up TensorBoard writer and save hyperparameters
     run_name = (
         f"{args.run_name}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     )
@@ -296,18 +408,17 @@ if __name__ == "__main__":
         % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    # Use GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    envs = gym.vector.SyncVectorEnv(
+    envs = gym.vector.AsyncVectorEnv(
         [
             make_env(i, args.capture_video, run_name, args.track_path)
             for i in range(args.num_envs)
         ]
     )
-    assert isinstance(
-        envs.single_action_space, gym.spaces.Discrete
-    ), "only discrete action space is supported"
 
+    # Initialize the agent and optimizers
     agent = Agent(envs, args.hidden_size).to(device)
     optimizer_policy = optim.Adam(
         agent.actor.parameters(), lr=args.policy_learning_rate, eps=1e-5
@@ -315,228 +426,114 @@ if __name__ == "__main__":
     optimizer_value = optim.Adam(
         agent.critic.parameters(), lr=args.value_function_learning_rate, eps=1e-5
     )
+    scheduler_policy = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_policy, mode="min", factor=0.9, patience=10
+    )
+    scheduler_value = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_value, mode="min", factor=0.9, patience=10
+    )
 
+    # Initialize the data buffers
     obs = torch.zeros(
-        (args.num_steps, args.num_envs) + envs.single_observation_space.shape
-    ).to(device)
+        (args.steps_per_epoch, args.num_envs) + envs.single_observation_space.shape,
+        device=device,
+        dtype=torch.float32,
+    )
     actions = torch.zeros(
-        (args.num_steps, args.num_envs) + envs.single_action_space.shape
-    ).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+        (args.steps_per_epoch, args.num_envs), device=device, dtype=torch.int64
+    )
+    logprobs = torch.zeros(
+        (args.steps_per_epoch, args.num_envs), device=device, dtype=torch.float32
+    )
+    rewards = torch.zeros(
+        (args.steps_per_epoch, args.num_envs), device=device, dtype=torch.float32
+    )
+    dones = torch.zeros(
+        (args.steps_per_epoch, args.num_envs), device=device, dtype=torch.bool
+    )
+    values = torch.zeros(
+        (args.steps_per_epoch, args.num_envs), device=device, dtype=torch.float32
+    )
+    masks = torch.zeros((args.steps_per_epoch, args.num_envs), device=device)
 
     global_step = 0
-    start_time = time.time()
-
-    next_obs = torch.Tensor(
-        np.array(envs.reset()[0])
-    ).to(device)
-    next_done = torch.zeros(args.num_envs).to(device)
-    num_updates = args.total_timesteps // args.batch_size
 
     try:
-        for update in tqdm(
-            range(1, num_updates + 1), desc="Training Progress", total=num_updates
-        ):
-            # Annealing the rate if instructed to do so.
-            if args.anneal_lr:
-                frac = 1.0 - (update - 1.0) / num_updates
+        for epoch in tqdm(range(args.epochs), desc="Epochs", leave=False):
+            # Environment reset at the beginning of each epoch
+            next_obs = torch.tensor(envs.reset()[0], device=device, dtype=torch.float32)
 
-                # Annealing the policy learning rate
-                lr_policy_now = frac * args.policy_learning_rate
-                for param_group in optimizer_policy.param_groups:
-                    param_group["lr"] = lr_policy_now
-
-                # Annealing the value function learning rate
-                lr_value_now = frac * args.value_function_learning_rate
-                for param_group in optimizer_value.param_groups:
-                    param_group["lr"] = lr_value_now
-
-            for step in tqdm(
-                range(args.num_steps), desc="Environment Steps", leave=False
-            ):
-                global_step += 1 * args.num_envs
+            for step in tqdm(range(args.steps_per_epoch), desc="Steps", leave=False):
                 obs[step] = next_obs
-                dones[step] = next_done
 
-                # ALGO LOGIC: action logic
+                # No gradient calculations needed during data collection
                 with torch.no_grad():
-                    action, logprob, _, value = agent.get_action_and_value(next_obs)
-                    values[step] = value.flatten()
+                    action, log_prob, _, value = agent.get_action_and_value(obs[step])
                 actions[step] = action
-                logprobs[step] = logprob
+                logprobs[step] = log_prob
+                values[step] = value.squeeze(-1)
 
-                # TRY NOT TO MODIFY: execute the game and log data.
-                next_obs, reward, done, _, info = envs.step(action.cpu().numpy())
-                rewards[step] = torch.tensor(reward).to(device).view(-1)
-                next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(
-                    done
-                ).to(device)
+                # Step the environments
+                next_obs, rewards_np, dones_np, _, info = envs.step(
+                    actions[step].cpu().numpy()
+                )
+                next_obs = torch.tensor(next_obs, device=device, dtype=torch.float32)
+                rewards[step] = torch.tensor(
+                    rewards_np, device=device, dtype=torch.float32
+                )
+                dones[step] = torch.tensor(dones_np, device=device, dtype=torch.bool)
 
-            # bootstrap value if not done
+                global_step += 1
+
+            # Calculate the last next_value for GAE computation
             with torch.no_grad():
-                next_value = agent.get_value(next_obs).reshape(1, -1)
-                if args.gae:
-                    advantages = torch.zeros_like(rewards).to(device)
-                    lastgaelam = 0
-                    for t in reversed(range(args.num_steps)):
-                        if t == args.num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            nextvalues = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            nextvalues = values[t + 1]
-                        delta = (
-                            rewards[t]
-                            + args.gamma * nextvalues * nextnonterminal
-                            - values[t]
-                        )
-                        advantages[t] = lastgaelam = (
-                            delta
-                            + args.gamma
-                            * args.gae_lambda
-                            * nextnonterminal
-                            * lastgaelam
-                        )
-                    returns = advantages + values
-                else:
-                    returns = torch.zeros_like(rewards).to(device)
-                    for t in reversed(range(args.num_steps)):
-                        if t == args.num_steps - 1:
-                            nextnonterminal = 1.0 - next_done
-                            next_return = next_value
-                        else:
-                            nextnonterminal = 1.0 - dones[t + 1]
-                            next_return = returns[t + 1]
-                        returns[t] = (
-                            rewards[t] + args.gamma * nextnonterminal * next_return
-                        )
-                    advantages = returns - values
+                _, _, _, next_value = agent.get_action_and_value(obs[-1])
 
-            # flatten the batch
-            b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
-            b_logprobs = logprobs.reshape(-1)
-            b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_values = values.reshape(-1)
-
-            # Optimizing the policy and value network
-            b_inds = np.arange(args.batch_size)
-            clipfracs = []
-            for epoch in range(args.update_epochs):
-                np.random.shuffle(b_inds)
-                for start in range(0, args.batch_size, args.minibatch_size):
-                    end = start + args.minibatch_size
-                    mb_inds = b_inds[start:end]
-
-                    _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                        b_obs[mb_inds], b_actions.long()[mb_inds]
-                    )
-                    logratio = newlogprob - b_logprobs[mb_inds]
-                    ratio = logratio.exp()
-
-                    with torch.no_grad():
-                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                        old_approx_kl = (-logratio).mean()
-                        approx_kl = ((ratio - 1) - logratio).mean()
-                        clipfracs += [
-                            ((ratio - 1.0).abs() > args.clip_coef).float().mean().item()
-                        ]
-
-                    mb_advantages = b_advantages[mb_inds]
-                    if args.norm_adv:
-                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
-                            mb_advantages.std() + 1e-8
-                        )
-
-                    # Policy loss
-                    pg_loss1 = -mb_advantages * ratio
-                    pg_loss2 = -mb_advantages * torch.clamp(
-                        ratio, 1 - args.clip_coef, 1 + args.clip_coef
-                    )
-                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                    # Reset gradients for policy optimizer
-                    optimizer_policy.zero_grad()
-                    pg_loss.backward()
-                    nn.utils.clip_grad_norm_(
-                        agent.actor.parameters(), args.max_grad_norm
-                    )
-                    optimizer_policy.step()
-
-                    # Value loss
-                    newvalue = newvalue.view(-1)
-                    if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                        v_clipped = b_values[mb_inds] + torch.clamp(
-                            newvalue - b_values[mb_inds],
-                            -args.clip_coef,
-                            args.clip_coef,
-                        )
-                        v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                        v_loss = 0.5 * v_loss_max.mean()
-                    else:
-                        v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
-
-                    entropy_loss = entropy.mean()
-                    loss = (
-                        pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-                    )
-
-                    # Reset gradients for value function optimizer
-                    optimizer_value.zero_grad()
-                    v_loss.backward()
-                    nn.utils.clip_grad_norm_(
-                        agent.critic.parameters(), args.max_grad_norm
-                    )
-                    optimizer_value.step()
-
-                if args.target_kl is not None:
-                    if approx_kl > args.target_kl:
-                        break
-
-            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = (
-                np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            # Compute returns and advantages
+            returns, advs = compute_gae(
+                next_value, rewards, dones, values, args.gamma, args.gae_lambda
             )
 
-            # After every update cycle, record the metrics
-            writer.add_scalar("Loss/policy_loss", pg_loss.item(), global_step)
-            # Policy Loss (pg_loss): Indicates how well the policy network is performing. Monitoring this helps in understanding whether the agent's policy is improving and whether the actions chosen by the policy are leading to higher advantages.
-            writer.add_scalar("Loss/value_loss", v_loss.item(), global_step)
-            # Value Loss (v_loss): Reflects the accuracy of the value network's predictions about future rewards. It's essential to ensure that the value predictions are close to the actual returns, which aids in stable learning.
-            writer.add_scalar("Loss/entropy_loss", entropy_loss.item(), global_step)
-            # Entropy is used as a regularization term to encourage exploration by maintaining a diverse range of actions. Logging this helps monitor how varied the action selection is and whether the agent is exploring sufficiently during training.
-            writer.add_scalar("Loss/total_loss", loss.item(), global_step)
-            # Represents the combined effect of the policy, value, and entropy losses. It's critical for evaluating the overall performance of the agent's updates.
-            writer.add_scalar(
-                "Info/policy_learning_rate",
-                optimizer_policy.param_groups[0]["lr"],
+            # Perform PPO updates
+            logprobs_old = logprobs.detach().clone()
+            for _ in range(args.train_iterations):
+                pg_loss, v_loss, entropy_loss = ppo_update(
+                    agent,
+                    optimizer_policy,
+                    optimizer_value,
+                    obs,
+                    actions,
+                    logprobs,
+                    returns,
+                    advs,
+                    args.clip_coef,
+                    args.ent_coef,
+                    args.vf_coef,
+                    args.max_grad_norm,
+                )
+                # Calculate the KL divergence between the old and new policy for early stopping
+                _, new_logprobs, _, _ = agent.get_action_and_value(obs, actions)
+                kl_divergence = torch.exp(logprobs_old) * (
+                    logprobs_old - new_logprobs.detach()
+                )
+                kl_divergence = kl_divergence.mean()
+                if kl_divergence > 1.5 * args.target_kl:
+                    break
+
+            if args.anneal_lr:
+                scheduler_policy.step(pg_loss)
+                scheduler_value.step(v_loss)
+
+            # Log the metrics to TensorBoard
+            record_metrics(
+                writer,
                 global_step,
+                pg_loss,
+                v_loss,
+                entropy_loss,
+                scheduler_policy,
+                scheduler_value,
             )
-            writer.add_scalar(
-                "Info/value_function_learning_rate",
-                optimizer_value.param_groups[0]["lr"],
-                global_step,
-            )
-            # Since the learning rate might be annealed (gradually reduced) during training, tracking it helps in understanding its impact on the loss metrics and overall training dynamics.
-            writer.add_scalar("Info/clip_fraction", np.mean(clipfracs), global_step)
-            # In Proximal Policy Optimization (PPO), the clipping parameter prevents large updates, which could destabilize learning. Logging the fraction of times the clipping is activated gives insights into how often the policy updates hit this boundary.
-            writer.add_scalar("Info/approx_kl", approx_kl.item(), global_step)
-            # This metric helps ensure that the updates to the policy are not too large, preserving learning stability. A sudden spike in KL divergence is an indicator that the policy changes too rapidly, which might lead to performance degradation.
-            writer.add_scalar("Info/explained_variance", explained_var, global_step)
-            # This shows how much of the variance in the rewards is explained by the value predictions. High explained variance is generally indicative of a well-performing value function.
-            writer.add_scalar("Misc/entropy", entropy.mean().item(), global_step)
-            # Again, entropy is logged under a miscellaneous category to track the randomness in action selection, reinforcing the agent's exploratory behavior.
-            writer.add_scalar(
-                "Environment/gates_passed", info["gates_passed"].mean(), global_step
-            )
-            # This metric helps in understanding the agent's progress in the environment. It quantifies how well the agent is performing by counting the number of gates passed during training.
 
     except KeyboardInterrupt:
         pass
@@ -550,5 +547,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Failed to save the model due to: {e}")
 
-    envs.close()
-    writer.close()
+    # Close the environments and TensorBoard writer
+    finally:
+        envs.close()
+        writer.close()

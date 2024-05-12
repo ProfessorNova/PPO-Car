@@ -734,7 +734,7 @@ class Car_env(gym.Env):
         terminated = False
         if self.__car.is_destroyed():
             terminated = True
-            reward -= 3
+            reward -= 5
         elif self.__time_step >= self.__time_limit:
             terminated = True
 

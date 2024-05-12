@@ -70,6 +70,12 @@ def parse_args():
     parser.add_argument(
         "--run-name", type=str, required=True, help="Name of the run for model path"
     )
+    parser.add_argument(
+        "--track-path",
+        type=str,
+        default="tracks/track.json",
+        help="Path to the directory containing the model",
+    )
     return parser.parse_args()
 
 
@@ -83,7 +89,7 @@ def main():
     model_path = f"runs/{args.run_name}/model.pt"
     agent = load_model(model_path, envs, hidden_size).to(device)
 
-    state = env.reset(options={"no_time_limit": True})[0]
+    state = env.reset(options={"no_time_limit": True, "track_path": args.track_path})[0]
     total_reward = 0
 
     while True:
