@@ -399,7 +399,7 @@ if __name__ == "__main__":
 
     # Set up TensorBoard writer and save hyperparameters
     run_name = (
-        f"{args.run_name}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{args.run_name}"
     )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(

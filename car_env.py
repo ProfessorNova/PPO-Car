@@ -683,38 +683,39 @@ class Car_env(gym.Env):
             self.__car.move_car("forward")
             # reward for moving forward
             reward += 0.01
-        elif action == 1:
+        elif action == 1:  # backward
             self.__car.move_car("backward")
-        elif action == 2:
+        elif action == 2:  # left
             self.__car.move_car("left")
-        elif action == 3:
+        elif action == 3:  # right
             self.__car.move_car("right")
-        elif action == 4:
+        elif action == 4:  # forward left
             self.__car.move_car("forward")
             self.__car.move_car("left")
-            reward += 0.01
-        elif action == 5:
+            reward += 0.02
+        elif action == 5:  # forward right
             self.__car.move_car("forward")
             self.__car.move_car("right")
-            reward += 0.01
-        elif action == 6:
+            reward += 0.02
+        elif action == 6:  # backward left
             self.__car.move_car("backward")
             self.__car.move_car("left")
-        elif action == 7:
+        elif action == 7:  # backward right
             self.__car.move_car("backward")
             self.__car.move_car("right")
-        elif action == 8:
+        elif action == 8:  # do nothing
             pass
 
         # Update Reward Gates
         gate = self.__car.get_passed_gate(self.__reward_gates)
         if gate is not None and gate.get_index() == self.__next_gate_index:
+            reward += 2  # reward for passing a gate
             self.__remaining_reward_gates -= 1
             # If all gates are passed, reset them
             if self.__remaining_reward_gates == 0:
                 gate.pass_gate()
                 # reward for completing a lap
-                reward += 10
+                reward += 20
                 self.__passed_reward_gates += 1
                 for gate in self.__reward_gates:
                     gate.restore_gate()
@@ -722,25 +723,23 @@ class Car_env(gym.Env):
                 self.__next_gate_index = 0
             else:
                 gate.pass_gate()
-                # reward for passing a gate
-                reward += 1
                 self.__passed_reward_gates += 1
                 self.__next_gate_index += 1
 
+        # Update car state and check for termination
         self.__car.update(self.__boundaries)
         self.__time_step += 1
-
-        # check for termination
         terminated = False
         if self.__car.is_destroyed():
             terminated = True
-            reward -= 5
+            reward -= 20  # penalty for collision
         elif self.__time_step >= self.__time_limit:
             terminated = True
+            reward += 2  # reward for surviving till time limit
 
+        # Observation and rendering
         obs = self._get_obs()
         info = self._get_info()
-
         if self.render_mode == "human":
             self.__render_frame()
 
@@ -833,8 +832,8 @@ def game_loop():
             else:
                 action = 8
 
-        _, _, done, _, info = env.step(action)
-        print(info)
+        obs, _, done, _, info = env.step(action)
+        print(obs)
         env.render()
     env.close()
 
