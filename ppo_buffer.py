@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
         help="Clip value loss",
     )
     parser.add_argument(
-        "--ent-coef", type=float, default=0.003, help="Entropy coefficient"
+        "--ent-coef", type=float, default=0.001, help="Entropy coefficient"
     )
     parser.add_argument(
         "--vf-coef", type=float, default=0.5, help="Value function coefficient"
