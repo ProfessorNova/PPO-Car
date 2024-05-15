@@ -30,10 +30,10 @@ def parse_args() -> argparse.Namespace:
         help="Name of the run",
     )
     parser.add_argument(
-        "--num-envs", type=int, default=2, help="Number of environments"
+        "--num-envs", type=int, default=8, help="Number of environments"
     )
     parser.add_argument(
-        "--steps-per-epoch", type=int, default=2000, help="Number of steps per epoch"
+        "--steps-per-epoch", type=int, default=8000, help="Number of steps per epoch"
     )
     parser.add_argument(
         "--epochs", type=int, default=200, help="Number of epochs to train"
