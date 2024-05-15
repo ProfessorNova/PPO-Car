@@ -4,7 +4,7 @@ import os
 import pickle
 from distutils.util import strtobool
 from multiprocessing import Pipe, Process
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cloudpickle
 import gymnasium as gym
@@ -30,10 +30,10 @@ def parse_args() -> argparse.Namespace:
         help="Name of the run",
     )
     parser.add_argument(
-        "--num-envs", type=int, default=8, help="Number of environments"
+        "--num-envs", type=int, default=2, help="Number of environments"
     )
     parser.add_argument(
-        "--steps-per-epoch", type=int, default=8000, help="Number of steps per epoch"
+        "--steps-per-epoch", type=int, default=2000, help="Number of steps per epoch"
     )
     parser.add_argument(
         "--epochs", type=int, default=200, help="Number of epochs to train"
@@ -201,7 +201,7 @@ class Agent(nn.Module):
 
     def __init__(self, envs: Env, hidden_size: Tuple[int]):
         super(Agent, self).__init__()
-        obs_size = np.array(envs.single_observation_space.shape).prod()
+        obs_size = envs.single_observation_space[0]
         act_size = envs.single_action_space.n
 
         # Critic Network
@@ -282,18 +282,18 @@ def compute_gae(next_value, rewards, dones, values, gamma, gae_lambda):
             - advs (torch.Tensor): Computed advantages for each timestep and each environment.
     """
     num_steps, num_envs = rewards.size()
-    advs = torch.zeros((num_steps, num_envs), device=rewards.device)
+    advs = torch.zeros_like(rewards)
     mask = ~dones
     mask = mask.float()
-    lastgaelam = torch.zeros(num_envs, device=rewards.device)
+    lastgaelam = torch.zeros(num_envs)
 
     for t in reversed(range(num_steps)):
         if t == num_steps - 1:
             next_non_terminal = mask[t]
-            next_values = next_value.squeeze()
+            next_values = next_value
         else:
             next_non_terminal = mask[t + 1]
-            next_values = values[t + 1].squeeze()
+            next_values = values[t + 1]
 
         delta = rewards[t] + gamma * next_values * next_non_terminal - values[t]
         lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
@@ -327,11 +327,11 @@ def ppo_update(
         agent (nn.Module): The agent containing the policy and value networks.
         optimizer_policy (torch.optim.Optimizer): Optimizer for the policy network.
         optimizer_value (torch.optim.Optimizer): Optimizer for the value network.
-        obs (torch.Tensor): Observations, shape [num_steps, num_envs, obs_dim].
-        actions (torch.Tensor): Actions taken, shape [num_steps, num_envs].
-        log_probs_old (torch.Tensor): Log probabilities of the actions under the old policy, shape [num_steps, num_envs].
-        returns (torch.Tensor): Computed returns, shape [num_steps, num_envs].
-        advantages (torch.Tensor): Computed advantages, shape [num_steps, num_envs].
+        obs (torch.Tensor): Observations, shape [num_steps * num_envs, obs_dim].
+        actions (torch.Tensor): Actions taken, shape [num_steps * num_envs].
+        logprobs_old (torch.Tensor): Log probabilities of the actions under the old policy, shape [num_steps * num_envs].
+        returns (torch.Tensor): Computed returns, shape [num_steps * num_envs].
+        advantages (torch.Tensor): Computed advantages, shape [num_steps * num_envs].
         clip_coef (float): Clipping coefficient for PPO.
         ent_coef (float): Entropy coefficient to encourage exploration.
         vf_coef (float): Coefficient for the value function loss.
@@ -340,6 +340,14 @@ def ppo_update(
     Returns:
         Tuple[float, float, float]: Policy loss, value loss, and entropy loss.
     """
+    # Move all inputs to the same device as the agent
+    device = next(agent.parameters()).device
+    obs = obs.to(device)
+    actions = actions.to(device)
+    logprobs_old = logprobs_old.to(device)
+    returns = returns.to(device)
+    advantages = advantages.to(device)
+
     # Forward pass to get outputs from the agent
     _, log_probs, entropy, values = agent.get_action_and_value(obs, actions)
 
@@ -415,102 +423,40 @@ class RolloutBuffer:
     def __init__(
         self,
         buffer_size: int,
-        obs_dim: Tuple[int],
-        act_dim: int,
-        gae_lambda: float,
-        gamma: float,
+        obs_shape: int,
+        gamma: float = 0.99,
+        gae_lambda: float = 0.95,
+        num_envs: int = 1,
     ):
         """
         Initialize the RolloutBuffer.
 
         Args:
             buffer_size (int): The maximum size of the buffer.
-            obs_dim (Tuple[int]): The shape of the observation space.
-            act_dim (int): The dimension of the action space.
-            gae_lambda (float): The lambda parameter for Generalized Advantage Estimation.
-            gamma (float): The discount factor.
+            obs_shape (int): The shape of the observation space.
+            gamma (float, optional): The discount factor. Defaults to 0.99.
+            gae_lambda (float, optional): The lambda parameter for Generalized Advantage Estimation. Defaults to 0.95.
+            num_envs (int, optional): The number of environments. Defaults to 1.
         """
-        self.buffer_size = buffer_size
-        self.obs_dim = obs_dim
-        self.act_dim = act_dim
-        self.gae_lambda = gae_lambda
-        self.gamma = gamma
+        self.observation_buffer = np.zeros((buffer_size, obs_shape), dtype=np.float32)
+        self.action_buffer = np.zeros(
+            (buffer_size), dtype=np.int32
+        )  # Only one action per timestep
+        self.advantage_buffer = np.zeros(buffer_size, dtype=np.float32)
+        self.reward_buffer = np.zeros(buffer_size, dtype=np.float32)
+        self.return_buffer = np.zeros(buffer_size, dtype=np.float32)
+        self.value_buffer = np.zeros(buffer_size, dtype=np.float32)
+        self.logprobability_buffer = np.zeros(buffer_size, dtype=np.float32)
+        self.gamma, self.lam = gamma, gae_lambda
 
-        self.obs_buf = np.zeros((buffer_size, *obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(buffer_size, dtype=np.float32)
-        self.adv_buf = np.zeros(buffer_size, dtype=np.float32)
-        self.rew_buf = np.zeros(buffer_size, dtype=np.float32)
-        self.ret_buf = np.zeros(buffer_size, dtype=np.float32)
-        self.val_buf = np.zeros(buffer_size, dtype=np.float32)
-        self.logp_buf = np.zeros(buffer_size, dtype=np.float32)
+        self.num_envs = num_envs
+        self.pointer_offset = buffer_size // num_envs
+        self.pointers = [i * self.pointer_offset for i in range(num_envs)]
+        self.trajectory_start_indices = [
+            i * self.pointer_offset for i in range(num_envs)
+        ]
 
-        self.ptr: int = 0
-        self.path_start_idx: int = 0
-        self.max_size: int = buffer_size
-
-    def store(self, obs: np.ndarray, act: int, rew: float, val: float, logp: float):
-        """
-        Store a single timestep in the buffer.
-
-        Args:
-            obs (np.ndarray): The observation at the current timestep.
-            act (int): The action taken at the current timestep.
-            rew (float): The reward received at the current timestep.
-            val (float): The value estimate at the current timestep.
-            logp (float): The log probability of the action taken.
-        """
-        assert self.ptr < self.max_size
-        self.obs_buf[self.ptr] = obs
-        self.act_buf[self.ptr] = act
-        self.rew_buf[self.ptr] = rew
-        self.val_buf[self.ptr] = val
-        self.logp_buf[self.ptr] = logp
-        self.ptr += 1
-
-    def finish_path(self, last_val: float = 0) -> None:
-        """
-        Finish the current trajectory path in the buffer. This function computes the
-        advantages and returns for the trajectory using the rewards, values, and the last
-        value estimate.
-
-        Args:
-            last_val (float, optional): The value estimate at the last timestep. Defaults to 0.
-        """
-        path_slice: slice = slice(self.path_start_idx, self.ptr)
-        rews: np.ndarray = np.append(self.rew_buf[path_slice], last_val)
-        vals: np.ndarray = np.append(self.val_buf[path_slice], last_val)
-
-        deltas: np.ndarray = rews[:-1] + self.gamma * vals[1:] - vals[:-1]
-        self.adv_buf[path_slice] = self.discount_cumsum(
-            deltas, self.gamma * self.gae_lambda
-        )
-
-        self.ret_buf[path_slice] = self.discount_cumsum(rews, self.gamma)[:-1]
-        self.path_start_idx = self.ptr
-
-    def get(self) -> dict[str, torch.Tensor]:
-        """
-        Get the data from the buffer. This function returns a dictionary containing the
-        observations, actions, returns, advantages, and log probabilities stored in the buffer.
-
-        Returns:
-            dict[str, torch.Tensor]: A dictionary containing the data from the buffer.
-        """
-        assert self.ptr == self.max_size
-        self.ptr, self.path_start_idx = 0, 0
-        adv_mean: float = np.mean(self.adv_buf)
-        adv_std: float = np.std(self.adv_buf)
-        self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        data: dict[str, np.ndarray] = dict(
-            obs=self.obs_buf,
-            act=self.act_buf,
-            ret=self.ret_buf,
-            adv=self.adv_buf,
-            logp=self.logp_buf,
-        )
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
-
-    def discount_cumsum(self, x: np.ndarray, discount: float) -> np.ndarray:
+    def discounted_cumulative_sums(self, x: np.ndarray, discount: float) -> np.ndarray:
         """
         Compute the discounted cumulative sum of an array. This function computes the sum
         of the array with discounting applied. The discount factor is applied to the sum
@@ -524,6 +470,88 @@ class RolloutBuffer:
             np.ndarray: The discounted cumulative sum of the input array.
         """
         return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
+
+    def store(
+        self,
+        observation: np.ndarray,
+        action: int,
+        reward: float,
+        value: float,
+        logprobability: float,
+        env_idx: int,
+    ):
+        """
+        Store a single timestep in the buffer.
+
+        Args:
+            observation (np.ndarray): The observation at the current timestep.
+            action (int): The action taken at the current timestep.
+            reward (float): The reward received at the current timestep.
+            value (float): The value estimate at the current timestep.
+            logprobability (float): The log probability of the action taken.
+            env_idx (int): The index of the environment.
+
+        Returns:
+            None
+        """
+        pointer = self.pointers[env_idx]
+        self.observation_buffer[pointer] = observation
+        self.action_buffer[pointer] = action
+        self.reward_buffer[pointer] = reward
+        self.value_buffer[pointer] = value[0]  # avoid deprecated warning
+        self.logprobability_buffer[pointer] = logprobability
+        self.pointers[env_idx] += 1
+
+    def finish_path(self, last_value: float = 0, env_idx: int = 0) -> None:
+        """
+        Finish the current trajectory path in the buffer. This function computes the
+        advantages and returns for the trajectory using the rewards, values, and the last
+        value estimate.
+
+        Args:
+            last_value (float, optional): The value estimate at the last timestep. Defaults to 0.
+            env_idx (int, optional): The index of the environment trajectory to finish. Defaults to 0.
+        """
+        path_slice = slice(
+            self.trajectory_start_indices[env_idx], self.pointers[env_idx]
+        )
+        rewards = np.append(self.reward_buffer[path_slice], last_value)
+        values = np.append(self.value_buffer[path_slice], last_value)
+
+        deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
+
+        self.advantage_buffer[path_slice] = self.discounted_cumulative_sums(
+            deltas, self.gamma * self.lam
+        )
+        self.return_buffer[path_slice] = self.discounted_cumulative_sums(
+            rewards, self.gamma
+        )[:-1]
+
+        self.trajectory_start_indices[env_idx] = self.pointers[env_idx]
+
+    def get(self) -> dict[str, torch.Tensor]:
+        """
+        Get the data from the buffer. This function returns a dictionary containing the
+        observations, actions, returns, advantages, and log probabilities stored in the buffer.
+
+        Returns:
+            dict[str, torch.Tensor]: A dictionary containing the data from the buffer.
+        """
+        for i in range(self.num_envs):
+            self.pointers[i] = i * self.pointer_offset
+            self.trajectory_start_indices[i] = i * self.pointer_offset
+        advantage_mean, advantage_std = (
+            np.mean(self.advantage_buffer),
+            np.std(self.advantage_buffer),
+        )
+        self.advantage_buffer = (self.advantage_buffer - advantage_mean) / advantage_std
+        return {
+            "obs": torch.tensor(self.observation_buffer, dtype=torch.float32),
+            "act": torch.tensor(self.action_buffer, dtype=torch.int64),
+            "adv": torch.tensor(self.advantage_buffer, dtype=torch.float32),
+            "ret": torch.tensor(self.return_buffer, dtype=torch.float32),
+            "logp": torch.tensor(self.logprobability_buffer, dtype=torch.float32),
+        }
 
 
 class CloudpickleWrapper:
@@ -645,7 +673,7 @@ class VecEnv:
             remote.send(("step", action))
         self.waiting = True
 
-    def step_wait(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[Any]]:
+    def step_wait(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
         """
         Waits for the environments to complete their steps and returns the results.
         Returns:
@@ -655,7 +683,7 @@ class VecEnv:
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
         obs, rews, dones, _, infos = zip(*results)
-        return np.stack(obs), np.stack(rews), np.stack(dones), infos
+        return np.stack(obs), np.stack(rews), np.stack(dones), False, infos
 
     def step(
         self, actions: np.ndarray
@@ -697,7 +725,7 @@ class VecEnv:
         self.closed = True
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
 
     # Set up TensorBoard writer and save hyperparameters
@@ -714,12 +742,11 @@ if __name__ == "__main__":
     # Use GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    envs = gym.vector.AsyncVectorEnv(
-        [
-            make_env(i, args.capture_video, run_name, args.track_path)
-            for i in range(args.num_envs)
-        ]
-    )
+    env_fns = [
+        make_env(i, args.capture_video, run_name, args.track_path)
+        for i in range(args.num_envs)
+    ]
+    envs = VecEnv(env_fns)
 
     # Initialize the agent and optimizers
     agent = Agent(envs, args.hidden_size).to(device)
@@ -738,11 +765,11 @@ if __name__ == "__main__":
 
     # Initialize the rollout buffer
     buffer = RolloutBuffer(
-        args.steps_per_epoch,
-        envs.single_observation_space.shape,
-        (envs.single_action_space.n,),
+        args.steps_per_epoch * args.num_envs,
+        envs.single_observation_space[0],
         args.gae_lambda,
         args.gamma,
+        num_envs=args.num_envs,
     )
 
     global_step = 0
@@ -750,35 +777,44 @@ if __name__ == "__main__":
     try:
         for epoch in tqdm(range(args.epochs), desc="Epochs", leave=False):
             # Environment reset at the beginning of each epoch
-            next_obs = torch.tensor(envs.reset()[0], device=device, dtype=torch.float32)
+            next_obs = torch.tensor(envs.reset(), device=device, dtype=torch.float32)
             for step in tqdm(range(args.steps_per_epoch), desc="Steps", leave=False):
                 obs = next_obs
                 # No gradient calculations needed during data collection
                 with torch.no_grad():
                     action, log_prob, _, value = agent.get_action_and_value(obs)
+
                 next_obs, rewards, dones, _, _ = envs.step(action.cpu().numpy())
                 next_obs = torch.tensor(next_obs, device=device, dtype=torch.float32)
                 rewards = torch.tensor(rewards, device=device, dtype=torch.float32)
                 dones = torch.tensor(dones, device=device, dtype=torch.bool)
-                buffer.store(
-                    obs.cpu().numpy(),
-                    action.cpu().numpy(),
-                    rewards.cpu().numpy(),
-                    value.cpu().numpy(),
-                    log_prob.cpu().numpy(),
-                )
+
+                for env_idx in range(args.num_envs):
+                    buffer.store(
+                        obs[env_idx].cpu().numpy(),
+                        action[env_idx].cpu().numpy(),
+                        rewards[env_idx].cpu().numpy(),
+                        value[env_idx].cpu().numpy(),
+                        log_prob[env_idx].cpu().numpy(),
+                        env_idx,
+                    )
 
                 global_step += 1
 
                 for idx, done in enumerate(dones):
                     if done:
-                        buffer.finish_path(last_val=0)
+                        buffer.finish_path(last_value=0, env_idx=idx)
 
             # Calculate the last next_value for GAE computation
             with torch.no_grad():
                 _, _, _, next_value = agent.get_action_and_value(next_obs)
 
-            buffer.finish_path(last_val=next_value.cpu().numpy())
+            # Finish the paths in the buffer
+            for idx in range(args.num_envs):
+                if not dones[idx]:
+                    buffer.finish_path(
+                        last_value=next_value[idx].cpu().numpy(), env_idx=idx
+                    )
             data = buffer.get()
 
             # Train the agent using the collected data
@@ -798,10 +834,10 @@ if __name__ == "__main__":
                     args.max_grad_norm,
                 )
                 _, new_logprobs, _, _ = agent.get_action_and_value(
-                    data["obs"], data["act"]
+                    data["obs"].to(device), data["act"].to(device)
                 )
-                kl_divergence = torch.exp(data["logp"]) * (
-                    data["logp"] - new_logprobs.detach()
+                kl_divergence = torch.exp(data["logp"].to(device)) * (
+                    data["logp"].to(device) - new_logprobs.detach()
                 )
                 kl_divergence = kl_divergence.mean()
                 if kl_divergence > 1.5 * args.target_kl:
@@ -838,3 +874,7 @@ if __name__ == "__main__":
     finally:
         envs.close()
         writer.close()
+
+
+if __name__ == "__main__":
+    main()
