@@ -71,13 +71,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--policy-learning-rate",
         type=float,
-        default=0.0002,
+        default=3e-4,
         help="Learning rate for policy network",
     )
     parser.add_argument(
         "--value-function-learning-rate",
         type=float,
-        default=0.0005,
+        default=1e-3,
         help="Learning rate for value function network",
     )
     parser.add_argument(
@@ -93,9 +93,9 @@ def parse_args() -> argparse.Namespace:
         help="Tuple indicating the size of hidden layers in the form (size1, size2)",
     )
     parser.add_argument(
-        "--gamma", type=float, default=0.95, help="Discount factor for rewards"
+        "--gamma", type=float, default=0.99, help="Discount factor for rewards"
     )
-    parser.add_argument("--gae-lambda", type=float, default=0.92, help="Lambda for GAE")
+    parser.add_argument("--gae-lambda", type=float, default=0.97, help="Lambda for GAE")
     parser.add_argument(
         "--clip-coef", type=float, default=0.1, help="Clipping parameter for PPO"
     )
@@ -858,20 +858,16 @@ def main():
                 scheduler_value,
             )
 
-    except KeyboardInterrupt:
-        pass
-
-    # Save the model
-    model_save_path = f"runs/{run_name}/model.pt"
-    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-    try:
-        torch.save(agent.state_dict(), model_save_path)
-        print(f"Model saved successfully at {model_save_path}")
-    except Exception as e:
-        print(f"Failed to save the model due to: {e}")
-
-    # Close the environments and TensorBoard writer
+    # Close the environment and TensorBoard writer and save the model
     finally:
+        model_save_path = f"runs/{run_name}/model.pt"
+        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        try:
+            torch.save(agent.state_dict(), model_save_path)
+            print(f"Model saved successfully at {model_save_path}")
+        except Exception as e:
+            print(f"Failed to save the model due to: {e}")
+
         envs.close()
         writer.close()
 
