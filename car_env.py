@@ -222,8 +222,8 @@ class Car:
         image: Optional[str] = None,
         turn_speed: float = 5.0,
         max_speed: float = 10.0,
-        max_acceleration: float = 0.8,
-        friction: float = 0.2,
+        max_acceleration: float = 0.5,
+        friction: float = 0.3,
         num_rays: int = 12,
     ):
         """
@@ -692,11 +692,11 @@ class Car_env(gym.Env):
         elif action == 4:  # forward left
             self.__car.move_car("forward")
             self.__car.move_car("left")
-            reward += 0.02
+            reward += 0.01
         elif action == 5:  # forward right
             self.__car.move_car("forward")
             self.__car.move_car("right")
-            reward += 0.02
+            reward += 0.01
         elif action == 6:  # backward left
             self.__car.move_car("backward")
             self.__car.move_car("left")
@@ -709,13 +709,13 @@ class Car_env(gym.Env):
         # Update Reward Gates
         gate = self.__car.get_passed_gate(self.__reward_gates)
         if gate is not None and gate.get_index() == self.__next_gate_index:
-            reward += 2  # reward for passing a gate
+            reward += 1  # reward for passing a gate
             self.__remaining_reward_gates -= 1
             # If all gates are passed, reset them
             if self.__remaining_reward_gates == 0:
                 gate.pass_gate()
                 # reward for completing a lap
-                reward += 20
+                reward += 10
                 self.__passed_reward_gates += 1
                 for gate in self.__reward_gates:
                     gate.restore_gate()
@@ -732,7 +732,7 @@ class Car_env(gym.Env):
         terminated = False
         if self.__car.is_destroyed():
             terminated = True
-            reward -= 20  # penalty for collision
+            reward -= 10  # penalty for collision
         elif self.__time_step >= self.__time_limit:
             terminated = True
             reward += 2  # reward for surviving till time limit

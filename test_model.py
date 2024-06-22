@@ -1,6 +1,6 @@
 import argparse
 import warnings
-from typing import Tuple
+from typing import Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -16,40 +16,104 @@ warnings.filterwarnings("ignore")
 gym.register("CarEnv-v0", entry_point="car_env:Car_env")
 
 
+def layer_init(
+    layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0
+) -> nn.Module:
+    """
+    Initialize the weights and biases of a neural network layer. The weights are initialized
+    using the orthogonal initialization method, and the biases are initialized to a constant value.
+
+    Args:
+        layer (nn.Module): Neural network layer to initialize.
+        std (float, optional): Standard deviation for weight initialization. Defaults to np.sqrt(2).
+        bias_const (float, optional): Constant value for bias initialization. Defaults to 0.0.
+
+    Returns:
+        nn.Module: Initialized neural network layer.
+    """
+    nn.init.orthogonal_(layer.weight, std)
+    nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+
 class Agent(nn.Module):
     """
-    Define the agent class as per the training script for consistency.
+    An agent that uses separate actor and critic networks to interact with an environment.
+    The actor network decides which action to take, and the critic network evaluates the
+    action by estimating the value function of the state. The agent is used to train the
+    actor and critic networks using the Proximal Policy Optimization (PPO) algorithm.
+
+    Attributes:
+        critic (nn.Module): A neural network that predicts the value of each state.
+        actor (nn.Module): A neural network that outputs a probability distribution over actions.
+
+    Args:
+        envs (Env): A batched environment object which provides the observation space
+                    and action space properties, to determine the input and output dimensions
+                    of the neural networks.
+        hidden_size (Tuple[int]): Tuple indicating the size of hidden layers in the form (size1, size2).
     """
 
     def __init__(self, envs: Env, hidden_size: Tuple[int]):
         super(Agent, self).__init__()
-        obs_size = np.array(envs.single_observation_space.shape).prod()
+        obs_size = envs.single_observation_space.shape[0]
         act_size = envs.single_action_space.n
 
-        # Define actor and critic networks
+        # Critic Network
         self.critic = nn.Sequential(
-            nn.Linear(obs_size, hidden_size[0]),
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[0]),
-            nn.Linear(hidden_size[0], hidden_size[1]),
+            layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
             nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[1]),
-            nn.Linear(hidden_size[1], 1),
-        )
-        self.actor = nn.Sequential(
-            nn.Linear(obs_size, hidden_size[0]),
-            nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[0]),
-            nn.Linear(hidden_size[0], hidden_size[1]),
-            nn.Tanh(),
-            nn.BatchNorm1d(hidden_size[1]),
-            nn.Linear(hidden_size[1], act_size),
+            layer_init(nn.Linear(hidden_size[1], 1)),
         )
 
-    def get_action_and_value(self, x, action=None):
+        # Actor Network
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
+            nn.Tanh(),
+            layer_init(nn.Linear(hidden_size[1], act_size)),
+            nn.Softmax(dim=-1),
+        )
+
+    def get_value(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the value of the current state. This is used by the agent to evaluate the
+        state and determine the advantage of taking an action.
+
+        Args:
+            x (torch.Tensor): The current state observation tensor.
+
+        Returns:
+            torch.Tensor: Estimated value of the state.
+        """
+        return self.critic(x)
+
+    def get_action_and_value(
+        self, x: torch.Tensor, action: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Determines the action to take for the current state and computes the value. This is
+        used by the agent to interact with the environment and train the actor and critic networks.
+
+        Args:
+            x (torch.Tensor): The current state observation tensor.
+            action (Optional[torch.Tensor]): Optional tensor specifying the action to evaluate.
+                                             If None, an action is sampled.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - sampled or provided action
+                - log probability of the action
+                - entropy of the action distribution
+                - estimated value of the state
+        """
         logits = self.actor(x)
         probs = Categorical(logits=logits)
-        action = probs.sample() if action is None else action
+        if action is None:
+            action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 

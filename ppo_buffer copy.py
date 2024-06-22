@@ -22,12 +22,6 @@ gym.register("CarEnv-v0", entry_point="car_env:Car_env")
 
 
 def parse_args() -> argparse.Namespace:
-    """
-    Parse command-line arguments.
-
-    Returns:
-        argparse.Namespace: Parsed command-line arguments.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--run-name",
@@ -48,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         "--track-path",
         type=str,
         default="tracks/track.json",
-        help="Path to JSON file containing track information",
+        help="Path to json files containing track information",
     )
     parser.add_argument(
         "--cuda",
@@ -61,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--capture-video",
         type=lambda x: bool(strtobool(x)),
-        default=True,
+        default=False,
         nargs="?",
         const=True,
         help="Capture video of the training",
@@ -125,14 +119,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target-kl", type=float, default=0.01, help="Target KL divergence"
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    return args
 
 
-def make_env(track_path: str) -> Callable[[], gym.Env]:
+def make_env(
+    idx: int, capture_video: bool, run_name: str, track_path: str
+) -> Callable[[], gym.Env]:
     """
     Create a function that returns a gym environment.
 
     Args:
+        idx (int): Index of the environment.
+        capture_video (bool): Flag indicating whether to capture video of the training.
+        run_name (str): Name of the run.
         track_path (str): Path to the track file.
 
     Returns:
@@ -141,12 +141,20 @@ def make_env(track_path: str) -> Callable[[], gym.Env]:
 
     def thunk() -> gym.Env:
         """
-        Create and initialize the gym environment.
+        Create and initialize the gym environment. If the capture_video flag is set to True,
+        the environment will record a video of the training.
 
         Returns:
             gym.Env: Initialized gym environment.
         """
+
         env = gym.make("CarEnv-v0", render_mode="rgb_array")
+        if capture_video and idx == 0:
+            env = gym.wrappers.RecordVideo(
+                env,
+                f"videos/{run_name}",
+                disable_logger=True,
+            )
         _ = env.reset(options={"track_path": track_path})
         return env
 
@@ -157,7 +165,8 @@ def layer_init(
     layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0
 ) -> nn.Module:
     """
-    Initialize the weights and biases of a neural network layer.
+    Initialize the weights and biases of a neural network layer. The weights are initialized
+    using the orthogonal initialization method, and the biases are initialized to a constant value.
 
     Args:
         layer (nn.Module): Neural network layer to initialize.
@@ -192,12 +201,12 @@ class Agent(nn.Module):
 
     def __init__(self, envs: Env, hidden_size: Tuple[int]):
         super(Agent, self).__init__()
-        observation_size = envs.single_observation_space[0]
-        action_size = envs.single_action_space.n
+        obs_size = envs.single_observation_space[0]
+        act_size = envs.single_action_space.n
 
         # Critic Network
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(observation_size, hidden_size[0])),
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
             nn.Tanh(),
@@ -206,17 +215,18 @@ class Agent(nn.Module):
 
         # Actor Network
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(observation_size, hidden_size[0])),
+            layer_init(nn.Linear(obs_size, hidden_size[0])),
             nn.Tanh(),
             layer_init(nn.Linear(hidden_size[0], hidden_size[1])),
             nn.Tanh(),
-            layer_init(nn.Linear(hidden_size[1], action_size)),
+            layer_init(nn.Linear(hidden_size[1], act_size)),
             nn.Softmax(dim=-1),
         )
 
     def get_value(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Computes the value of the current state.
+        Computes the value of the current state. This is used by the agent to evaluate the
+        state and determine the advantage of taking an action.
 
         Args:
             x (torch.Tensor): The current state observation tensor.
@@ -230,7 +240,8 @@ class Agent(nn.Module):
         self, x: torch.Tensor, action: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Determines the action to take for the current state and computes the value.
+        Determines the action to take for the current state and computes the value. This is
+        used by the agent to interact with the environment and train the actor and critic networks.
 
         Args:
             x (torch.Tensor): The current state observation tensor.
@@ -251,16 +262,11 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
-def compute_gae(
-    next_value: torch.Tensor,
-    rewards: torch.Tensor,
-    dones: torch.Tensor,
-    values: torch.Tensor,
-    gamma: float,
-    gae_lambda: float,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def compute_gae(next_value, rewards, dones, values, gamma, gae_lambda):
     """
-    Calculate Generalized Advantage Estimation (GAE) for vectorized environments.
+    Calculate Generalized Advantage Estimation (GAE) for vectorized environments. This function
+    computes the returns and advantages for each timestep and each environment using the rewards,
+    values, and dones tensors.
 
     Args:
         next_value (torch.Tensor): The value estimate of the next state for each environment.
@@ -298,21 +304,24 @@ def compute_gae(
 
 
 def ppo_update(
-    agent: nn.Module,
-    optimizer_policy: torch.optim.Optimizer,
-    optimizer_value: torch.optim.Optimizer,
-    obs: torch.Tensor,
-    actions: torch.Tensor,
-    logprobs_old: torch.Tensor,
-    returns: torch.Tensor,
-    advantages: torch.Tensor,
-    clip_coef: float,
-    ent_coef: float,
-    vf_coef: float,
-    max_grad_norm: float,
-) -> Tuple[float, float, float]:
+    agent,
+    optimizer_policy,
+    optimizer_value,
+    obs,
+    actions,
+    logprobs_old,
+    returns,
+    advantages,
+    clip_coef,
+    ent_coef,
+    vf_coef,
+    max_grad_norm,
+):
     """
-    Perform a PPO update on policy and value networks.
+    Perform a PPO update on policy and value networks. This function adjusts the policy
+    and value networks by performing gradient descent on batches of data. The policy
+    network is updated to maximize the expected return, while the value network is updated
+    to minimize the mean squared error between the predicted value and the computed return.
 
     Args:
         agent (nn.Module): The agent containing the policy and value networks.
@@ -370,17 +379,17 @@ def ppo_update(
 
 
 def record_metrics(
-    writer: SummaryWriter,
-    global_step: int,
-    policy_loss: float,
-    value_loss: float,
-    entropy_loss: float,
-    scheduler_policy: torch.optim.lr_scheduler,
-    scheduler_value: torch.optim.lr_scheduler,
-    best_gates_passed: int,
-) -> None:
+    writer,
+    global_step,
+    policy_loss,
+    value_loss,
+    entropy_loss,
+    scheduler_policy,
+    scheduler_value,
+):
     """
-    Record training metrics to TensorBoard.
+    Record training metrics to TensorBoard. This function logs the policy loss, value loss,
+    entropy loss, and learning rates to TensorBoard.
 
     Args:
         writer (SummaryWriter): TensorBoard writer.
@@ -388,11 +397,8 @@ def record_metrics(
         policy_loss (float): Recent policy loss computed.
         value_loss (float): Recent value loss computed.
         entropy_loss (float): Recent entropy loss computed.
-        scheduler_policy (torch.optim.lr_scheduler): Learning rate scheduler for the policy network.
-        scheduler_value (torch.optim.lr_scheduler): Learning rate scheduler for the value network.
-        best_gates_passed (int): Best number of gates passed in an episode.
+        args (argparse.Namespace): Parsed command-line arguments.
     """
-    writer.add_scalar("Environment/best_gates_passed", best_gates_passed, global_step)
     writer.add_scalar("Loss/policy_loss", policy_loss, global_step)
     writer.add_scalar("Loss/value_loss", value_loss, global_step)
     writer.add_scalar("Loss/entropy_loss", entropy_loss, global_step)
@@ -410,7 +416,8 @@ def record_metrics(
 
 class RolloutBuffer:
     """
-    A buffer to store the trajectories collected by the agent.
+    A buffer to store the trajectories collected by the agent. This buffer stores the
+    observations, actions, rewards, advantages, returns, values, and log probabilities
     """
 
     def __init__(
@@ -432,7 +439,9 @@ class RolloutBuffer:
             num_envs (int, optional): The number of environments. Defaults to 1.
         """
         self.observation_buffer = np.zeros((buffer_size, obs_shape), dtype=np.float32)
-        self.action_buffer = np.zeros((buffer_size,), dtype=np.int32)
+        self.action_buffer = np.zeros(
+            (buffer_size), dtype=np.int32
+        )  # Only one action per timestep
         self.advantage_buffer = np.zeros(buffer_size, dtype=np.float32)
         self.reward_buffer = np.zeros(buffer_size, dtype=np.float32)
         self.return_buffer = np.zeros(buffer_size, dtype=np.float32)
@@ -449,7 +458,9 @@ class RolloutBuffer:
 
     def discounted_cumulative_sums(self, x: np.ndarray, discount: float) -> np.ndarray:
         """
-        Compute the discounted cumulative sum of an array.
+        Compute the discounted cumulative sum of an array. This function computes the sum
+        of the array with discounting applied. The discount factor is applied to the sum
+        of the array in reverse order.
 
         Args:
             x (np.ndarray): The input array.
@@ -468,7 +479,7 @@ class RolloutBuffer:
         value: float,
         logprobability: float,
         env_idx: int,
-    ) -> None:
+    ):
         """
         Store a single timestep in the buffer.
 
@@ -479,18 +490,23 @@ class RolloutBuffer:
             value (float): The value estimate at the current timestep.
             logprobability (float): The log probability of the action taken.
             env_idx (int): The index of the environment.
+
+        Returns:
+            None
         """
         pointer = self.pointers[env_idx]
         self.observation_buffer[pointer] = observation
         self.action_buffer[pointer] = action
         self.reward_buffer[pointer] = reward
-        self.value_buffer[pointer] = value[0]
+        self.value_buffer[pointer] = value[0]  # avoid deprecated warning
         self.logprobability_buffer[pointer] = logprobability
         self.pointers[env_idx] += 1
 
     def finish_path(self, last_value: float = 0, env_idx: int = 0) -> None:
         """
-        Finish the current trajectory path in the buffer.
+        Finish the current trajectory path in the buffer. This function computes the
+        advantages and returns for the trajectory using the rewards, values, and the last
+        value estimate.
 
         Args:
             last_value (float, optional): The value estimate at the last timestep. Defaults to 0.
@@ -513,12 +529,13 @@ class RolloutBuffer:
 
         self.trajectory_start_indices[env_idx] = self.pointers[env_idx]
 
-    def get(self) -> Dict[str, torch.Tensor]:
+    def get(self) -> dict[str, torch.Tensor]:
         """
-        Get the data from the buffer.
+        Get the data from the buffer. This function returns a dictionary containing the
+        observations, actions, returns, advantages, and log probabilities stored in the buffer.
 
         Returns:
-            Dict[str, torch.Tensor]: A dictionary containing the data from the buffer.
+            dict[str, torch.Tensor]: A dictionary containing the data from the buffer.
         """
         for i in range(self.num_envs):
             self.pointers[i] = i * self.pointer_offset
@@ -538,10 +555,6 @@ class RolloutBuffer:
 
 
 class CloudpickleWrapper:
-    """
-    Wrapper for objects to be pickled with cloudpickle.
-    """
-
     def __init__(self, x: Any):
         """
         Initialize the CloudpickleWrapper.
@@ -558,6 +571,7 @@ class CloudpickleWrapper:
         Returns:
             bytes: The pickled state of the wrapped object.
         """
+
         return cloudpickle.dumps(self.x)
 
     def __setstate__(self, ob: bytes) -> None:
@@ -567,6 +581,7 @@ class CloudpickleWrapper:
         Args:
             ob (bytes): The pickled state of the wrapped object.
         """
+
         self.x = pickle.loads(ob)
 
 
@@ -601,15 +616,28 @@ def worker(remote: Any, parent_remote: Any, env_fn_wrapper: Callable[[], Any]) -
 
 class VecEnv:
     """
-    Vectorized environment class to run multiple environments in parallel.
+    Vectorized environment class to run multiple environments in parallel. This class
+    creates a set of environments and runs them in parallel using multiprocessing.
+
+    Args:
+        env_fns (List[Callable[[], Env]]): List of wrapper functions to create environments.
     """
 
     def __init__(self, env_fns: List[Callable[[], Env]]):
         """
-        Initialize the VecEnv class.
+        Initializes the PPOBuffer class.
 
         Args:
-            env_fns (List[Callable[[], Env]]): List of wrapper functions to create environments.
+            env_fns (List[Callable[[], Env]]): A list of functions that create the environment instances.
+
+        Attributes:
+            waiting (bool): Indicates whether the buffer is waiting for a response from the environment.
+            closed (bool): Indicates whether the buffer is closed.
+            remotes (List[Connection]): A list of connection objects for communication with the worker processes.
+            work_remotes (List[Connection]): A list of connection objects for communication with the main process.
+            ps (List[Process]): A list of worker processes.
+            single_observation_space (np.ndarray): The observation space of a single environment instance.
+            single_action_space: The action space of a single environment instance.
         """
         self.waiting: bool = False
         self.closed: bool = False
@@ -638,7 +666,6 @@ class VecEnv:
     def step_async(self, actions: np.ndarray) -> None:
         """
         Asynchronously sends actions to the environments.
-
         Args:
             actions (np.ndarray): An array of actions to be sent to each environment.
         """
@@ -646,10 +673,9 @@ class VecEnv:
             remote.send(("step", action))
         self.waiting = True
 
-    def step_wait(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[Any]]:
+    def step_wait(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
         """
         Waits for the environments to complete their steps and returns the results.
-
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray, List[Any]]: A tuple containing the observations,
             rewards, dones, and info lists for each environment.
@@ -664,10 +690,8 @@ class VecEnv:
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[Any]]:
         """
         Sends actions to the environments and waits for the results.
-
         Args:
             actions (np.ndarray): An array of actions to be sent to each environment.
-
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray, List[Any]]: A tuple containing the observations,
             rewards, dones, and info lists for each environment.
@@ -678,14 +702,12 @@ class VecEnv:
     def reset(self) -> np.ndarray:
         """
         Resets the environments and returns the initial observations.
-
         Returns:
             np.ndarray: An array of initial observations for each environment.
         """
         for remote in self.remotes:
             remote.send(("reset", None))
-        obs, info = zip(*[remote.recv() for remote in self.remotes])
-        return np.stack(obs), info
+        return np.stack([remote.recv()[0] for remote in self.remotes])
 
     def close(self) -> None:
         """
@@ -704,9 +726,6 @@ class VecEnv:
 
 
 def main():
-    """
-    Main function to run the PPO algorithm.
-    """
     args = parse_args()
 
     # Set up TensorBoard writer and save hyperparameters
@@ -723,7 +742,10 @@ def main():
     # Use GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    env_fns = [make_env(args.track_path) for _ in range(args.num_envs)]
+    env_fns = [
+        make_env(i, args.capture_video, run_name, args.track_path)
+        for i in range(args.num_envs)
+    ]
     envs = VecEnv(env_fns)
 
     # Initialize the agent and optimizers
@@ -755,40 +777,21 @@ def main():
     try:
         for epoch in tqdm(range(args.epochs), desc="Epochs", leave=False):
             # Environment reset at the beginning of each epoch
-            next_obs, next_infos = envs.reset()
-            next_obs = torch.tensor(next_obs, device=device, dtype=torch.float32)
-            infos = next_infos
-
-            # For logging the best episode
-            best_gates_passed = -1
-            best_episode_action_path = None
-            current_episode_actions = [[] for _ in range(args.num_envs)]
-
+            next_obs = torch.tensor(envs.reset(), device=device, dtype=torch.float32)
             for step in tqdm(range(args.steps_per_epoch), desc="Steps", leave=False):
                 obs = next_obs
                 # No gradient calculations needed during data collection
                 with torch.no_grad():
                     action, log_prob, _, value = agent.get_action_and_value(obs)
 
-                next_obs, rewards, dones, _, next_infos = envs.step(
-                    action.cpu().numpy()
-                )
+                next_obs, rewards, dones, _, _ = envs.step(action.cpu().numpy())
                 next_obs = torch.tensor(next_obs, device=device, dtype=torch.float32)
                 rewards = torch.tensor(rewards, device=device, dtype=torch.float32)
                 dones = torch.tensor(dones, device=device, dtype=torch.bool)
 
-                for env_idx, (done, info) in enumerate(zip(dones, infos)):
+                for env_idx, done in enumerate(dones):
                     if done:
                         buffer.finish_path(0, env_idx)
-                        gates_passed = info["gates_passed"]
-
-                        # Get info for rendering the best episode
-                        if gates_passed > best_gates_passed:
-                            best_gates_passed = gates_passed
-                            best_episode_action_path = current_episode_actions[env_idx][
-                                :
-                            ]
-                        current_episode_actions[env_idx] = []
                     else:
                         buffer.store(
                             obs[env_idx].cpu().numpy(),
@@ -798,10 +801,6 @@ def main():
                             log_prob[env_idx].cpu().numpy(),
                             env_idx,
                         )
-                        current_episode_actions[env_idx].append(
-                            action[env_idx].cpu().numpy()
-                        )
-                infos = next_infos
 
                 global_step += 1
 
@@ -847,27 +846,6 @@ def main():
                 scheduler_policy.step(pg_loss)
                 scheduler_value.step(v_loss)
 
-            # Render the best episode
-            if (
-                args.capture_video
-                and epoch % 10 == 0
-                and best_episode_action_path is not None
-            ):
-                render_env = make_env(args.track_path)()
-                render_env = gym.wrappers.RecordVideo(
-                    render_env,
-                    f"videos/{run_name}/best_run_epoch{epoch}",
-                    disable_logger=True,
-                )
-                done = False
-                action_idx = 0
-                while not done and action_idx < len(best_episode_action_path):
-                    _, _, done, _, _ = render_env.step(
-                        best_episode_action_path[action_idx]
-                    )
-                    action_idx += 1
-                render_env.close()
-
             # Log the metrics to TensorBoard
             record_metrics(
                 writer,
@@ -877,7 +855,6 @@ def main():
                 entropy_loss,
                 scheduler_policy,
                 scheduler_value,
-                best_gates_passed,
             )
 
     # Close the environment and TensorBoard writer and save the model
