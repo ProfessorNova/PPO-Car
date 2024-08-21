@@ -1,3 +1,4 @@
 videos
-runs
+logs
 __pycache__
+.idea
