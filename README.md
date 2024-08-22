@@ -4,7 +4,7 @@
 
 ## Results
 
-![Demo Gif](https://github.com/ProfessorNova/PPO-Car/docs/demo.gif)
+![Demo Gif](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/demo.gif)
 
 ---
 
