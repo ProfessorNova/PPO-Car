@@ -12,12 +12,14 @@
 
 1. Clone the repository
 2. Go to the repository directory
-3. Run `pip install -r requirements.txt` (for proper pytorch installation, visit
+3. Have python installed (tested with python 3.10.11)
+4. Run `pip install -r requirements.txt` (for proper pytorch installation, visit
    the [pytorch website](https://pytorch.org/get-started/locally/))
-4. Run `python train.py --run-name "my_run"` (if you want to use cuda, add `--cuda` to the command)
-5. Select the track you want to train on (currently there are `track` and `big_track`)
-6. On default, a video will be recorded every 10 epochs. You can find the videos in the `videos` directory.
-7. Additionally, you can view the training progress with tensorboard by running `tensorboard --logdir "logs"` and
+5. Run `python train.py --run-name "my_run"` (if you want to use cuda, add `--cuda` to the command)
+6. An window will open where you can select the track you want to train on. (You can also create your own track with the
+   `track_editor.py` script. More on that below)
+7. On default, a video will be recorded every 10 epochs. You can find the videos in the `videos` directory.
+8. Additionally, you can view the training progress with tensorboard by running `tensorboard --logdir "logs"` and
    opening the link in your browser.
 
 ---
@@ -56,6 +58,7 @@ If you have any issues with too little RAM, you might want to decrease the `n_en
 - CPU: AMD Ryzen 9 5900X
 - GPU: Nvidia RTX 3080 (12GB VRAM)
 - RAM: 64GB DDR4
+- OS: Windows 11
 
 ### Training:
 

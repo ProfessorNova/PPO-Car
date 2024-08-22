@@ -74,7 +74,7 @@ def parse_args():
     parser.add_argument("--run-name", required=True, help="Name of the run")
     parser.add_argument("--cuda", default=False, action='store_true', help="Enable CUDA")
     parser.add_argument("--env", default="CarEnv-v0", help="Environment to use")
-    parser.add_argument("--n-envs", type=int, default=24, help="Number of environments")
+    parser.add_argument("--n-envs", type=int, default=16, help="Number of environments")
     parser.add_argument("--n-epochs", type=int, default=200, help="Number of epochs to run")
     parser.add_argument("--n-steps", type=int, default=1024, help="Number of steps per epoch per environment")
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
