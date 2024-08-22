@@ -1,4 +1,6 @@
+checkpoints
 videos
 logs
 __pycache__
 .idea
+venv

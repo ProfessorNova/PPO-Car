@@ -20,9 +20,12 @@ def editor_init():
         running: bool - A flag indicating whether the game is currently running.
         mouse_pressed: bool - A flag indicating whether the mouse button is currently pressed.
         track_data: dict - The dictionary containing track data.
-            - outer_track_points: list - The list of tuples representing the x and y coordinates of the outer boundary points of the track.
-            - inner_track_points: list - The list of tuples representing the x and y coordinates of the inner boundary points of the track.
-            - reward_gates: list - The list of tuples representing the x and y coordinates of the reward gates on the track. One reward gate consists of two points.
+            - outer_track_points: list - The list of tuples representing the x and y coordinates of the outer boundary
+            points of the track.
+            - inner_track_points: list - The list of tuples representing the x and y coordinates of the inner boundary
+            points of the track.
+            - reward_gates: list - The list of tuples representing the x and y coordinates of the reward gates
+            on the track. One reward gate consists of two points.
                                  The first reward gate is the start/finish line.
             - initial_position: tuple - The initial position of the car on the track.
             - initial_angle: int - The initial angle of the car on the track.
@@ -32,7 +35,8 @@ def editor_init():
     """
     pygame.init()
     # globals
-    global WIDTH, HEIGHT, ASPECT_RATIO, screen, clock, running, mouse_pressed, track_data, current_mode, current_width, current_height
+    global WIDTH, HEIGHT, ASPECT_RATIO, screen, clock, running, mouse_pressed, track_data, \
+        current_mode, current_width, current_height
 
     WIDTH = 1280
     HEIGHT = 720
@@ -130,7 +134,7 @@ def save_track_data():
 
 def select_file():
     """
-    Opens a file dialog to select a JSON file from the tracks folder.
+    Opens a file dialog to select a JSON file from the tracks' folder.
 
     Returns:
         str: The path to the selected file, or None if no file was selected.
@@ -265,7 +269,8 @@ def draw_arrow(screen, origin, angle, length=30, color=(255, 255, 0), thickness=
 
     Notes:
         The arrow is drawn with the specified angle using trigonometric functions to calculate the endpoint.
-        The arrowhead is created by calculating two additional lines forming a simple triangle at the end of the main line.
+        The arrowhead is created by calculating two additional lines forming a simple triangle at the
+        end of the main line.
     """
     # Convert angle from degrees to radians
     angle_rad = np.radians(angle)
@@ -340,8 +345,8 @@ def draw():
         pygame.draw.lines(screen, outer_track_color, False, scaled_outer_track_points)
     # Draw one last line to the cursor
     if (
-        current_mode == "outer_track_points"
-        and len(track_data["outer_track_points"]) > 0
+            current_mode == "outer_track_points"
+            and len(track_data["outer_track_points"]) > 0
     ):
         pygame.draw.line(
             screen,
@@ -360,8 +365,8 @@ def draw():
         pygame.draw.lines(screen, inner_track_color, False, scaled_inner_track_points)
     # Draw one last line to the cursor
     if (
-        current_mode == "inner_track_points"
-        and len(track_data["inner_track_points"]) > 0
+            current_mode == "inner_track_points"
+            and len(track_data["inner_track_points"]) > 0
     ):
         pygame.draw.line(
             screen,
@@ -374,10 +379,10 @@ def draw():
     # draw polygon if outer and inner track points are complete
     # check if the first and last points are the same
     if (
-        len(track_data["outer_track_points"]) > 1
-        and len(track_data["inner_track_points"]) > 1
-        and track_data["outer_track_points"][0] == track_data["outer_track_points"][-1]
-        and track_data["inner_track_points"][0] == track_data["inner_track_points"][-1]
+            len(track_data["outer_track_points"]) > 1
+            and len(track_data["inner_track_points"]) > 1
+            and track_data["outer_track_points"][0] == track_data["outer_track_points"][-1]
+            and track_data["inner_track_points"][0] == track_data["inner_track_points"][-1]
     ):
         pygame.draw.polygon(screen, road_color, scaled_outer_track_points)
         pygame.draw.polygon(screen, background_color, scaled_inner_track_points)
@@ -398,7 +403,7 @@ def draw():
                     False,
                     [
                         scale_pos(point, (current_width, current_height))
-                        for point in track_data["reward_gates"][i : i + 2]
+                        for point in track_data["reward_gates"][i: i + 2]
                     ],
                 )
     # Draw one last line to the cursor
@@ -449,8 +454,8 @@ def draw():
 
     # If the initial position and angle are set, draw the angle from the initial position
     elif (
-        track_data["initial_position"] is not None
-        and track_data["initial_angle"] is not None
+            track_data["initial_position"] is not None
+            and track_data["initial_angle"] is not None
     ):
         scaled_initial_position = scale_pos(
             track_data["initial_position"],
@@ -566,11 +571,9 @@ def main():
                     next_mode()
                 # Save the track data
                 elif event.key == pygame.K_s:
-                    # TODO: Implement input for the file name
                     save_track_data()
                 # Load the track data
                 elif event.key == pygame.K_l:
-                    # TODO: Implement input for the file name
                     load_track_data()
                 # Clear the track data
                 elif event.key == pygame.K_c:
