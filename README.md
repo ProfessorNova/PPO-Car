@@ -24,6 +24,61 @@
 
 ---
 
+## Environment
+
+### Description
+
+The environment is a simple 2D car simulation. The track data is loaded from a json file. The car has to drive around
+the track and pass through the reward gates and avoid the walls. The Car has velocity and can snap turn.
+
+### Action Space
+
+The action space is a `Discrete(9)` space. The actions are as follows:
+
+- 0: forward
+- 1: backward
+- 2: left
+- 3: right
+- 4: forward left
+- 5: forward right
+- 6: backward left
+- 7: backward right
+- 8: do nothing (thus removing velocity)
+
+### Observation Space
+
+The observation space is a `Box(6 + num_rays, )` space. The observations are as follows:
+
+- 0: normalized x position of the car ranging from 0 to 1
+- 1: normalized y position of the car ranging from 0 to 1
+- 2: normalized x velocity of the car ranging from -1 to 1
+- 3: normalized y velocity of the car ranging from -1 to 1
+- 4: cos of the car angle ranging from -1 to 1
+- 5: sin of the car angle ranging from -1 to 1
+- 6 to 6 + num_rays: distance to the nearest wall for each ray
+
+### Reward
+
+The Agent receives a reward of 0.01 for choosing actions with a forward action.
+The Agent receives a reward of 1.0 for passing through a reward gate.
+The Agent receives a penalty of -3.0 for hitting a wall.
+The Agent receives a reward of 10.0 for finishing a lap.
+
+### Starting State
+
+The Agent starts at a predefined position and direction which can be set in the track json file.
+
+### Episode End
+
+The episode terminates if the Agent hits a wall and truncates if the time steps pass 1000.
+
+### Arguments
+
+The path to the track json file can be set as an option in the reset function of the environment.
+Like it is done in the `train.py` script.
+
+---
+
 ## Make your own track
 
 In order to make your own track, run `python track_editor.py`. This script will open a window where you can
