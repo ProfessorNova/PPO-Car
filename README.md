@@ -16,7 +16,7 @@
 4. Run `pip install -r requirements.txt` (for proper pytorch installation, visit
    the [pytorch website](https://pytorch.org/get-started/locally/))
 5. Run `python train.py --run-name "my_run"` (if you want to use cuda, add `--cuda` to the command)
-6. An window will open where you can select the track you want to train on. (You can also create your own track with the
+6. A window will open where you can select the track you want to train on. (You can also create your own track with the
    `track_editor.py` script. More on that below)
 7. On default, a video will be recorded every 10 epochs. You can find the videos in the `videos` directory.
 8. Additionally, you can view the training progress with tensorboard by running `tensorboard --logdir "logs"` and
