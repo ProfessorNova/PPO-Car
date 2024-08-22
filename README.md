@@ -6,9 +6,9 @@
 
 ![Demo Gif](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/demo.gif)
 
----
+The configuration for this run is listed below. The training process took about 35 minutes.
 
-## Installation
+---
 
 ## Installation
 
