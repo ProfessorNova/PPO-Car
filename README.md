@@ -38,7 +38,7 @@ After that press `s` to save the track. You can now use this track to train your
 
 Here is a short visual guide on how to use the track editor:
 
-(insert gif here)
+![Track Editor Gif](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/creating_track.gif)
 
 ---
 
@@ -59,4 +59,18 @@ If you have any issues with too little RAM, you might want to decrease the `n_en
 
 ### Training:
 
+Reward:
+
+![Reward](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/charts_avg_reward.svg)
+
 Policy_loss:
+
+![Policy Loss](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/losses_policy_loss.svg)
+
+Value_loss:
+
+![Value Loss](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/losses_value_loss.svg)
+
+Entropy_loss:
+
+![Entropy](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/losses_entropy.svg)
