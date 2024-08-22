@@ -26,7 +26,7 @@
 
 ## Make your own track
 
-In order to make your own track, you can use the `track_editor.py` script. This script will open a window where you can
+In order to make your own track, run `python track_editor.py`. This script will open a window where you can
 draw your own track. First you will need to draw the outer border of the track.
 For this click on the window to create points. If you mess up, you can always press `c` to clear the track and start
 over.
@@ -34,7 +34,8 @@ After finishing the outer border press `n` to close the loop and move on to the 
 Now you can draw the inner border of the track.
 After finishing the inner border press `n` again now you will see the track you have created.
 In the next step you will draw the reward gates. These will be used to guide the Agent through the track as it will
-receive a reward for passing through them. The first gate will be the finishline.
+receive a reward for passing through them. The first gate will be the finishline. All the gates should be places in
+order of the track.
 After finishing the reward gates press `n` again and place the agent start position and start direction.
 After that press `s` to save the track. You can now use this track to train your agent.
 
