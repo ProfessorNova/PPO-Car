@@ -59,6 +59,23 @@ If you have any issues with too little RAM, you might want to decrease the `n_en
 
 ### Training:
 
+The video from above was done on the `big_track.json` with the following hyperparameters:
+
+- `n_envs`: 24
+- `n_epochs`: 200
+- `n_steps`: 1024
+- `batch_size`: 512
+- `train_iters`: 40
+- `gamma`: 0.99
+- `gae_lambda`: 0.95
+- `clip_coef`: 0.2
+- `vf_coef`: 0.5
+- `ent_coef`: 0.001
+- `max_grad_norm`: 1.0
+- `learning_rate`: 3e-4
+- `learning_rate_decay`: 0.99
+- `reward_scaling`: 0.1
+
 Reward:
 
 ![Reward](https://github.com/ProfessorNova/PPO-Car/blob/main/docs/charts_avg_reward.svg)
