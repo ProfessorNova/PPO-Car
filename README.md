@@ -4,10 +4,7 @@
 
 ## Results
 
-<video width="320" height="240" controls>
-  <source src= type="https://github.com/ProfessorNova/PPO-Car/blob/rework/docs/demo.mp4">
-  Your browser does not support the video tag.
-</video>
+![Demo Gif](https://github.com/ProfessorNova/PPO-Car/docs/demo.gif)
 
 ---
 
